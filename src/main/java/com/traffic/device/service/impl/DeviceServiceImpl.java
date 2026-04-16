@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.traffic.common.BusinessException;
 import com.traffic.common.ErrorCode;
+import com.traffic.customer.service.CustomerVisitService;
+import com.traffic.customer.service.CustomerVisitService.VisitStatus;
 import com.traffic.device.dto.DeviceUploadRequest;
 import com.traffic.device.dto.PersonDetection;
 import com.traffic.device.entity.TrafficFact;
@@ -29,8 +31,10 @@ import java.util.*;
  *
  * 核心流程：
  *  1. 通过bindId查商家
- *  2. 遍历personDetections，解析26维属性，按 (merchantId, deviceId, 分钟桶) 聚合到Map
- *  3. 对每个聚合桶做 INSERT ... ON DUPLICATE KEY UPDATE（MySQL UPSERT）
+ *  2. 遍历personDetections：
+ *     a. 解析26维属性，按 (merchantId, deviceId, 分钟桶) 聚合到Map
+ *     b. 非穿行人员：调用 CustomerVisitService 记录新老客状态，累加到聚合桶
+ *  3. 对每个聚合桶做 UPSERT（SELECT → INSERT or UPDATE）
  *  4. 更新Redis今日累计缓存
  */
 @Slf4j
@@ -41,12 +45,10 @@ public class DeviceServiceImpl implements DeviceService {
     private final MerchantMapper merchantMapper;
     private final TrafficFactMapper trafficFactMapper;
     private final AttributeParser attributeParser;
+    private final CustomerVisitService customerVisitService;
     private final RedisTemplate<String, Object> redisTemplate;
 
-    /** Redis key前缀 */
     private static final String REDIS_KEY_PREFIX = "traffic:realtime:";
-
-    /** Redis缓存TTL：25小时，保证跨零点仍可读到昨日数据 */
     private static final Duration REDIS_TTL = Duration.ofHours(25);
 
     @Override
@@ -65,20 +67,17 @@ public class DeviceServiceImpl implements DeviceService {
                 request.getSystemId(), bindId, merchantId, request.getPersonDetections().size());
 
         // 2. 遍历行人检测记录，按 (deviceId, 分钟桶) 聚合
-        // key格式: "deviceId|yyyy-MM-ddTHH:mm"
         Map<String, TrafficFact> bucketMap = new LinkedHashMap<>();
 
         for (PersonDetection detection : request.getPersonDetections()) {
             if (detection.getAttributes() == null || detection.getAttributes().size() != 26) {
-                log.warn("personId={} 的attributes长度不为26，跳过", detection.getPersonId());
                 throw new BusinessException(ErrorCode.INVALID_ATTRIBUTES_LENGTH);
             }
 
-            // 使用entryTime计算所在分钟桶（UTC转北京时间）
+            // 计算分钟级时间桶（UTC → 北京时间，秒位清零）
             LocalDateTime entryLdt = detection.getEntryTime() != null
                     ? LocalDateTime.ofInstant(detection.getEntryTime(), ZoneId.of("Asia/Shanghai"))
                     : LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
-
             LocalDateTime timeBucket = entryLdt.withSecond(0).withNano(0);
             String bucketKey = detection.getDeviceId() + "|" + timeBucket;
 
@@ -88,31 +87,44 @@ public class DeviceServiceImpl implements DeviceService {
                 f.setMerchantId(merchantId);
                 f.setDeviceId(detection.getDeviceId());
                 f.setTimeBucket(timeBucket);
-                // 初始化所有计数字段为0
                 initZero(f);
                 return f;
             });
 
-            // 3. 解析26维属性并累加到聚合桶
+            // 解析26维属性并累加到聚合桶
             attributeParser.parseAndAccumulate(detection, fact);
+
+            // 非穿行：记录新老客状态
+            if (!detection.isPassThrough() && detection.getPersonId() != null) {
+                try {
+                    VisitStatus status = customerVisitService.recordVisit(
+                            merchantId, detection.getPersonId());
+                    if (status.isNew()) {
+                        fact.setNewCustomerCount(fact.getNewCustomerCount() + 1);
+                    }
+                    if (status.isReturning()) {
+                        fact.setReturningCustomerCount(fact.getReturningCustomerCount() + 1);
+                    }
+                } catch (Exception e) {
+                    // 新老客记录失败不影响主流程
+                    log.warn("新老客记录失败: personId={}, err={}", detection.getPersonId(), e.getMessage());
+                }
+            }
         }
 
-        // 4. 将聚合结果写入MySQL（UPSERT: 存在则累加，不存在则插入）
+        // 3. 将聚合结果 UPSERT 到 MySQL
         for (TrafficFact fact : bucketMap.values()) {
             upsertTrafficFact(fact);
         }
 
-        // 5. 更新Redis今日累计缓存
+        // 4. 更新Redis今日累计缓存
         updateRedisCache(merchantId);
     }
 
     /**
-     * MySQL UPSERT：
-     * 若 (merchant_id, device_id, time_bucket) 不存在则INSERT，
-     * 若存在则对所有计数字段做累加（UPDATE col = col + delta）
+     * UPSERT：不存在则INSERT，存在则对所有字段累加
      */
     private void upsertTrafficFact(TrafficFact fact) {
-        // 查找是否已存在同一聚合键的记录
         TrafficFact existing = trafficFactMapper.selectOne(
                 new LambdaQueryWrapper<TrafficFact>()
                         .eq(TrafficFact::getMerchantId, fact.getMerchantId())
@@ -121,10 +133,8 @@ public class DeviceServiceImpl implements DeviceService {
         );
 
         if (existing == null) {
-            // 不存在，直接插入
             trafficFactMapper.insert(fact);
         } else {
-            // 存在，累加所有字段
             trafficFactMapper.update(null,
                 new LambdaUpdateWrapper<TrafficFact>()
                     .eq(TrafficFact::getId, existing.getId())
@@ -156,58 +166,47 @@ public class DeviceServiceImpl implements DeviceService {
                     .setSql("lower_style_pattern = lower_style_pattern + " + fact.getLowerStylePattern())
                     .setSql("total_stay_seconds = total_stay_seconds + " + fact.getTotalStaySeconds())
                     .setSql("stay_count = stay_count + " + fact.getStayCount())
+                    .setSql("new_customer_count = new_customer_count + " + fact.getNewCustomerCount())
+                    .setSql("returning_customer_count = returning_customer_count + " + fact.getReturningCustomerCount())
             );
         }
     }
 
-    /**
-     * 将今日全量聚合数据写入Redis缓存
-     * key: traffic:realtime:{merchantId}
-     * TTL: 25小时
-     */
+    /** 将今日数据汇总写入Redis（供看板接口使用） */
     private void updateRedisCache(Integer merchantId) {
         try {
             LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
-            LocalDateTime startOfDay = today.atStartOfDay();
-            LocalDateTime endOfDay = today.plusDays(1).atStartOfDay();
-
             List<TrafficFact> todayData = trafficFactMapper.findTodayByMerchant(
-                    merchantId, startOfDay, endOfDay);
-
-            // 汇总今日累计数据
+                    merchantId, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
             Map<String, Object> summary = aggregateTodaySummary(todayData);
-            String redisKey = REDIS_KEY_PREFIX + merchantId;
-            redisTemplate.opsForValue().set(redisKey, summary, REDIS_TTL);
-            log.debug("Redis缓存已更新: key={}", redisKey);
-
+            redisTemplate.opsForValue().set(REDIS_KEY_PREFIX + merchantId, summary, REDIS_TTL);
         } catch (Exception e) {
-            // Redis缓存更新失败不影响主流程
             log.error("更新Redis缓存失败，merchantId={}", merchantId, e);
         }
     }
 
-    /**
-     * 将多条分钟桶数据汇总为今日累计Map
-     */
+    /** 将多条分钟桶数据汇总为今日累计 Map（供看板使用） */
     public static Map<String, Object> aggregateTodaySummary(List<TrafficFact> facts) {
-        Map<String, Object> summary = new LinkedHashMap<>();
-        int totalEnter = 0, totalPass = 0;
-        int genderMale = 0, genderFemale = 0;
+        int totalEnter = 0, totalPass = 0, genderMale = 0, genderFemale = 0;
         int ageUnder18 = 0, age1860 = 0, ageOver60 = 0;
         int totalStaySeconds = 0, stayCount = 0;
+        int newCustomer = 0, returningCustomer = 0;
 
         for (TrafficFact f : facts) {
-            totalEnter += f.getEnterCount();
-            totalPass += f.getPassCount();
-            genderMale += f.getGenderMale();
-            genderFemale += f.getGenderFemale();
-            ageUnder18 += f.getAgeUnder18();
-            age1860 += f.getAge1860();
-            ageOver60 += f.getAgeOver60();
-            totalStaySeconds += f.getTotalStaySeconds();
-            stayCount += f.getStayCount();
+            totalEnter        += f.getEnterCount();
+            totalPass         += f.getPassCount();
+            genderMale        += f.getGenderMale();
+            genderFemale      += f.getGenderFemale();
+            ageUnder18        += f.getAgeUnder18();
+            age1860           += f.getAge1860();
+            ageOver60         += f.getAgeOver60();
+            totalStaySeconds  += f.getTotalStaySeconds();
+            stayCount         += f.getStayCount();
+            if (f.getNewCustomerCount() != null)       newCustomer       += f.getNewCustomerCount();
+            if (f.getReturningCustomerCount() != null) returningCustomer += f.getReturningCustomerCount();
         }
 
+        Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("totalEnter", totalEnter);
         summary.put("totalPass", totalPass);
         summary.put("genderMale", genderMale);
@@ -217,10 +216,12 @@ public class DeviceServiceImpl implements DeviceService {
         summary.put("ageOver60", ageOver60);
         summary.put("avgStaySeconds", stayCount > 0 ? totalStaySeconds / stayCount : 0);
         summary.put("stayCount", stayCount);
+        summary.put("newCustomerCount", newCustomer);
+        summary.put("returningCustomerCount", returningCustomer);
         return summary;
     }
 
-    /** 将TrafficFact所有计数字段初始化为0 */
+    /** 初始化 TrafficFact 所有计数字段为 0 */
     private void initZero(TrafficFact f) {
         f.setEnterCount(0); f.setPassCount(0);
         f.setGenderMale(0); f.setGenderFemale(0);
@@ -233,5 +234,6 @@ public class DeviceServiceImpl implements DeviceService {
         f.setLowerTrousers(0); f.setLowerShorts(0); f.setLowerSkirt(0);
         f.setLowerStyleStripe(0); f.setLowerStylePattern(0);
         f.setTotalStaySeconds(0); f.setStayCount(0);
+        f.setNewCustomerCount(0); f.setReturningCustomerCount(0);
     }
 }

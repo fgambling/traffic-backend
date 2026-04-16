@@ -3,12 +3,14 @@ package com.traffic;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
  * 商家客流智能分析系统 - 启动入口
  */
 @SpringBootApplication
+@EnableScheduling
 public class TrafficApplication {
 
     public static void main(String[] args) {

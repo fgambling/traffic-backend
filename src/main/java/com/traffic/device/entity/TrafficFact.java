@@ -74,4 +74,10 @@ public class TrafficFact {
     private Integer totalStaySeconds;
     /** 有效停留人次 */
     private Integer stayCount;
+
+    // ---------- 新老客（V2新增字段） ----------
+    /** 新客人数（first_visit_date == today） */
+    private Integer newCustomerCount;
+    /** 老客人数（visit_count >= 2） */
+    private Integer returningCustomerCount;
 }
