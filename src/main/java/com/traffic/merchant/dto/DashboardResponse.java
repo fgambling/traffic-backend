@@ -34,6 +34,18 @@ public class DashboardResponse {
     /** 有效停留人次 */
     private int stayCount;
 
+    /** 商家名称 */
+    private String merchantName;
+
+    /** 套餐类型：1普通 2中级 3高级 */
+    private Integer packageType;
+
     /** 数据来源：cache=缓存，db=数据库 */
     private String dataSource;
+
+    /** 昨日进店总数 */
+    private int yesterdayCount;
+
+    /** 较昨日进店变化百分比（正数=增长，负数=下降；无昨日数据时=100.0） */
+    private double deltaPercent;
 }

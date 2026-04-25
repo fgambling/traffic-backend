@@ -166,6 +166,9 @@ public class DeviceServiceImpl implements DeviceService {
                     .setSql("lower_style_pattern = lower_style_pattern + " + fact.getLowerStylePattern())
                     .setSql("total_stay_seconds = total_stay_seconds + " + fact.getTotalStaySeconds())
                     .setSql("stay_count = stay_count + " + fact.getStayCount())
+                    .setSql("stay_under5min = stay_under5min + " + fact.getStayUnder5min())
+                    .setSql("stay_5to15min = stay_5to15min + " + fact.getStay5To15min())
+                    .setSql("stay_over15min = stay_over15min + " + fact.getStayOver15min())
                     .setSql("new_customer_count = new_customer_count + " + fact.getNewCustomerCount())
                     .setSql("returning_customer_count = returning_customer_count + " + fact.getReturningCustomerCount())
             );
@@ -234,6 +237,7 @@ public class DeviceServiceImpl implements DeviceService {
         f.setLowerTrousers(0); f.setLowerShorts(0); f.setLowerSkirt(0);
         f.setLowerStyleStripe(0); f.setLowerStylePattern(0);
         f.setTotalStaySeconds(0); f.setStayCount(0);
+        f.setStayUnder5min(0); f.setStay5To15min(0); f.setStayOver15min(0);
         f.setNewCustomerCount(0); f.setReturningCustomerCount(0);
     }
 }

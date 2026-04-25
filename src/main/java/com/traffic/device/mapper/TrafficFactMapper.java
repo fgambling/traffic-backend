@@ -2,6 +2,9 @@ package com.traffic.device.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.traffic.device.entity.TrafficFact;
+import com.traffic.merchant.dto.ProfileResponse;
+import com.traffic.merchant.dto.StayTrendPoint;
+import com.traffic.merchant.dto.TrendPoint;
 import com.traffic.rule.dto.HourlyStatsDTO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -74,6 +77,17 @@ public interface TrafficFactMapper extends BaseMapper<TrafficFact> {
                                 @Param("startDate") LocalDateTime startDate);
 
     /**
+     * 指定时段内进店总人数
+     */
+    @Select("SELECT COALESCE(SUM(enter_count), 0) FROM traffic_fact " +
+            "WHERE merchant_id = #{merchantId} " +
+            "AND time_bucket >= #{startTime} " +
+            "AND time_bucket < #{endTime}")
+    int sumEnterCount(@Param("merchantId") Integer merchantId,
+                      @Param("startTime") LocalDateTime startTime,
+                      @Param("endTime") LocalDateTime endTime);
+
+    /**
      * 昨日同时段平均停留时长（秒）
      */
     @Select("SELECT COALESCE(SUM(total_stay_seconds) / NULLIF(SUM(stay_count), 0), 0) " +
@@ -84,6 +98,123 @@ public interface TrafficFactMapper extends BaseMapper<TrafficFact> {
     Double queryAvgStaySeconds(@Param("merchantId") Integer merchantId,
                                @Param("fromTime") LocalDateTime fromTime,
                                @Param("toTime") LocalDateTime toTime);
+
+    /**
+     * 客流趋势查询（按粒度聚合）
+     * type: hour / day / week / month
+     * 注意：script 标签内 < 须转义为 &lt;
+     */
+    @Select("<script>" +
+            "SELECT " +
+            "<choose>" +
+            "  <when test=\"type == 'minute'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:%i:00')</when>" +
+            "  <when test=\"type == 'hour'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:00:00')</when>" +
+            "  <when test=\"type == 'day'\">DATE_FORMAT(time_bucket, '%Y-%m-%d')</when>" +
+            "  <when test=\"type == 'week'\">DATE_FORMAT(DATE_SUB(time_bucket, INTERVAL WEEKDAY(time_bucket) DAY), '%Y-%m-%d')</when>" +
+            "  <otherwise>DATE_FORMAT(time_bucket, '%Y-%m')</otherwise>" +
+            "</choose> AS time_label, " +
+            "COALESCE(SUM(enter_count), 0)   AS enter_count, " +
+            "COALESCE(SUM(pass_count), 0)    AS pass_count, " +
+            "COALESCE(SUM(gender_male), 0)   AS gender_male, " +
+            "COALESCE(SUM(gender_female), 0) AS gender_female, " +
+            "COALESCE(SUM(age_under18), 0)   AS age_under18, " +
+            "COALESCE(SUM(age_18_60), 0)     AS age1860, " +
+            "COALESCE(SUM(age_over60), 0)    AS age_over60 " +
+            "FROM traffic_fact " +
+            "WHERE merchant_id = #{merchantId} " +
+            "AND time_bucket >= #{startTime} " +
+            "AND time_bucket &lt; #{endTime} " +
+            "GROUP BY " +
+            "<choose>" +
+            "  <when test=\"type == 'minute'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:%i:00')</when>" +
+            "  <when test=\"type == 'hour'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:00:00')</when>" +
+            "  <when test=\"type == 'day'\">DATE_FORMAT(time_bucket, '%Y-%m-%d')</when>" +
+            "  <when test=\"type == 'week'\">DATE_FORMAT(DATE_SUB(time_bucket, INTERVAL WEEKDAY(time_bucket) DAY), '%Y-%m-%d')</when>" +
+            "  <otherwise>DATE_FORMAT(time_bucket, '%Y-%m')</otherwise>" +
+            "</choose> " +
+            "ORDER BY time_label ASC" +
+            "</script>")
+    List<TrendPoint> queryTrend(@Param("merchantId") Integer merchantId,
+                                @Param("type") String type,
+                                @Param("startTime") LocalDateTime startTime,
+                                @Param("endTime") LocalDateTime endTime);
+
+    /**
+     * 用户画像聚合查询：指定时段内所有属性维度的汇总
+     */
+    @Select("SELECT " +
+            "COALESCE(SUM(enter_count), 0)           AS total_enter, " +
+            "COALESCE(SUM(pass_count), 0)            AS total_pass, " +
+            "COALESCE(SUM(gender_male), 0)           AS gender_male, " +
+            "COALESCE(SUM(gender_female), 0)         AS gender_female, " +
+            "COALESCE(SUM(age_under18), 0)           AS age_under18, " +
+            "COALESCE(SUM(age_18_60), 0)             AS age1860, " +
+            "COALESCE(SUM(age_over60), 0)            AS age_over60, " +
+            "COALESCE(SUM(accessory_glasses), 0)     AS accessory_glasses, " +
+            "COALESCE(SUM(accessory_hat), 0)         AS accessory_hat, " +
+            "COALESCE(SUM(accessory_boots), 0)       AS accessory_boots, " +
+            "COALESCE(SUM(bag_handbag), 0)           AS bag_handbag, " +
+            "COALESCE(SUM(bag_shoulder), 0)          AS bag_shoulder, " +
+            "COALESCE(SUM(bag_backpack), 0)          AS bag_backpack, " +
+            "COALESCE(SUM(hold_item), 0)             AS hold_item, " +
+            "COALESCE(SUM(upper_short), 0)           AS upper_short, " +
+            "COALESCE(SUM(upper_long), 0)            AS upper_long, " +
+            "COALESCE(SUM(upper_coat), 0)            AS upper_coat, " +
+            "COALESCE(SUM(upper_style_stripe), 0)    AS upper_style_stripe, " +
+            "COALESCE(SUM(upper_style_logo), 0)      AS upper_style_logo, " +
+            "COALESCE(SUM(upper_style_plaid), 0)     AS upper_style_plaid, " +
+            "COALESCE(SUM(upper_style_splice), 0)    AS upper_style_splice, " +
+            "COALESCE(SUM(lower_trousers), 0)        AS lower_trousers, " +
+            "COALESCE(SUM(lower_shorts), 0)          AS lower_shorts, " +
+            "COALESCE(SUM(lower_skirt), 0)           AS lower_skirt, " +
+            "COALESCE(SUM(lower_style_stripe), 0)    AS lower_style_stripe, " +
+            "COALESCE(SUM(lower_style_pattern), 0)   AS lower_style_pattern, " +
+            "COALESCE(SUM(total_stay_seconds), 0)    AS total_stay_seconds, " +
+            "COALESCE(SUM(stay_count), 0)            AS stay_count, " +
+            "COALESCE(SUM(new_customer_count), 0)    AS new_customer_count, " +
+            "COALESCE(SUM(returning_customer_count), 0) AS returning_customer_count " +
+            "FROM traffic_fact " +
+            "WHERE merchant_id = #{merchantId} " +
+            "AND time_bucket >= #{startTime} " +
+            "AND time_bucket < #{endTime}")
+    ProfileResponse queryProfile(@Param("merchantId") Integer merchantId,
+                                 @Param("startTime") LocalDateTime startTime,
+                                 @Param("endTime") LocalDateTime endTime);
+
+    /**
+     * 停留时长分析：按粒度聚合分桶数据 + 平均停留秒数趋势
+     * type: hour / day / week
+     */
+    @Select("<script>" +
+            "SELECT " +
+            "<choose>" +
+            "  <when test=\"type == 'minute'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:%i:00')</when>" +
+            "  <when test=\"type == 'hour'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:00:00')</when>" +
+            "  <when test=\"type == 'week'\">DATE_FORMAT(DATE_SUB(time_bucket, INTERVAL WEEKDAY(time_bucket) DAY), '%Y-%m-%d')</when>" +
+            "  <otherwise>DATE_FORMAT(time_bucket, '%Y-%m-%d')</otherwise>" +
+            "</choose> AS time_label, " +
+            "COALESCE(SUM(stay_count), 0)                                            AS stay_count, " +
+            "COALESCE(SUM(stay_under5min), 0)                                        AS under5_count, " +
+            "COALESCE(SUM(stay_5to15min), 0)                                         AS mid5to15_count, " +
+            "COALESCE(SUM(stay_over15min), 0)                                        AS over15_count, " +
+            "COALESCE(SUM(total_stay_seconds) / NULLIF(SUM(stay_count), 0), 0)       AS avg_stay_seconds " +
+            "FROM traffic_fact " +
+            "WHERE merchant_id = #{merchantId} " +
+            "AND time_bucket >= #{startTime} " +
+            "AND time_bucket &lt; #{endTime} " +
+            "GROUP BY " +
+            "<choose>" +
+            "  <when test=\"type == 'minute'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:%i:00')</when>" +
+            "  <when test=\"type == 'hour'\">DATE_FORMAT(time_bucket, '%Y-%m-%d %H:00:00')</when>" +
+            "  <when test=\"type == 'week'\">DATE_FORMAT(DATE_SUB(time_bucket, INTERVAL WEEKDAY(time_bucket) DAY), '%Y-%m-%d')</when>" +
+            "  <otherwise>DATE_FORMAT(time_bucket, '%Y-%m-%d')</otherwise>" +
+            "</choose> " +
+            "ORDER BY time_label ASC" +
+            "</script>")
+    List<StayTrendPoint> queryStayTrend(@Param("merchantId") Integer merchantId,
+                                        @Param("type") String type,
+                                        @Param("startTime") LocalDateTime startTime,
+                                        @Param("endTime") LocalDateTime endTime);
 
     /**
      * 连续3天同时段下降检测

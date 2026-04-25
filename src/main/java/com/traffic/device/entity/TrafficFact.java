@@ -74,6 +74,12 @@ public class TrafficFact {
     private Integer totalStaySeconds;
     /** 有效停留人次 */
     private Integer stayCount;
+    /** 停留 < 5分钟（300秒）的人次 */
+    private Integer stayUnder5min;
+    /** 停留 5~15分钟 的人次 */
+    private Integer stay5To15min;
+    /** 停留 > 15分钟（900秒）的人次 */
+    private Integer stayOver15min;
 
     // ---------- 新老客（V2新增字段） ----------
     /** 新客人数（first_visit_date == today） */

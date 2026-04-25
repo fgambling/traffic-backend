@@ -9,6 +9,8 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 
 /**
  * AI建议Mapper
@@ -42,4 +44,13 @@ public interface AiAdviceMapper extends BaseMapper<AiAdvice> {
                                    @Param("merchantId") Integer merchantId,
                                    @Param("adviceType") String adviceType,
                                    @Param("source") Integer source);
+
+    /**
+     * 按商家聚合建议数量和有用率（用于费用/成本按商家明细）
+     */
+    @Select("SELECT merchant_id AS merchantId, COUNT(1) AS totalCount, " +
+            "SUM(CASE WHEN source = 2 THEN 1 ELSE 0 END) AS aiCount, " +
+            "SUM(CASE WHEN feedback = 1 THEN 1 ELSE 0 END) AS usefulCount " +
+            "FROM ai_advice GROUP BY merchant_id ORDER BY totalCount DESC")
+    List<Map<String, Object>> costByMerchant();
 }

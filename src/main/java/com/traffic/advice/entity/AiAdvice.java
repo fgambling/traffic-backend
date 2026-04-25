@@ -38,6 +38,12 @@ public class AiAdvice {
     /** 用户反馈：0未反馈 1有用 2无用 */
     private Integer feedback;
 
+    /** 管理员审核：0未审核 1已采纳 2标记待优化 */
+    private Integer reviewStatus;
+
+    /** 管理员备注 */
+    private String adminNote;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

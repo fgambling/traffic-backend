@@ -16,8 +16,12 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Spring Security配置
@@ -34,8 +38,24 @@ public class SecurityConfig {
     private final ObjectMapper objectMapper;
 
     @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        config.setAllowedHeaders(List.of("*"));
+        config.setAllowCredentials(true);
+        config.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+
+    @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+            // 启用CORS
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
             // 禁用CSRF（无状态API不需要）
             .csrf(AbstractHttpConfigurer::disable)
 
@@ -44,10 +64,16 @@ public class SecurityConfig {
 
             // 路由权限
             .authorizeHttpRequests(auth -> auth
+                // OPTIONS 预检请求直接放行
+                .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                 // 设备上传（硬件直接调用，无JWT）
                 .requestMatchers("/api/device/upload").permitAll()
                 // 微信登录
                 .requestMatchers("/api/auth/**").permitAll()
+                // 后台管理登录（其他 /api/admin/** 需要JWT）
+                .requestMatchers("/api/admin/login").permitAll()
+                // 上传文件的静态访问
+                .requestMatchers("/uploads/**").permitAll()
                 // 其余全部需要登录
                 .anyRequest().authenticated()
             )

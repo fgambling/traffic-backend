@@ -27,6 +27,9 @@ public class Merchant {
     /** 联系电话 */
     private String contactPhone;
 
+    /** 登录密码（BCrypt，后台创建时设置） */
+    private String password;
+
     /** 地址 */
     private String address;
 
@@ -41,6 +44,9 @@ public class Merchant {
 
     /** 微信openid（商家端登录用） */
     private String openid;
+
+    /** 是否为业务员跟进线索：1=线索（不显示在商家管理），0=正式商家 */
+    private Integer isLead;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

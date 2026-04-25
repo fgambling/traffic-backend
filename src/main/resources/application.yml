@@ -7,6 +7,10 @@ spring:
   application:
     name: traffic-backend
 
+  # 本地开发时取消注释以启用 dev profile（解锁 /api/auth/dev-login 测试端点）
+  profiles:
+    active: dev
+
   # 数据源配置
   datasource:
     url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:traffic_db}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false

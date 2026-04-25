@@ -76,6 +76,14 @@ public class AttributeParser {
             if (staySeconds > 0) {
                 fact.setTotalStaySeconds(fact.getTotalStaySeconds() + (int) staySeconds);
                 fact.setStayCount(fact.getStayCount() + 1);
+                // 按区间分桶：<5min / 5-15min / >15min
+                if (staySeconds < 300) {
+                    fact.setStayUnder5min(fact.getStayUnder5min() + 1);
+                } else if (staySeconds <= 900) {
+                    fact.setStay5To15min(fact.getStay5To15min() + 1);
+                } else {
+                    fact.setStayOver15min(fact.getStayOver15min() + 1);
+                }
             }
         }
 
