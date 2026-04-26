@@ -65,6 +65,32 @@ public interface MerchantFollowMapper extends BaseMapper<MerchantFollow> {
             "ORDER BY mf.cooperation_time DESC")
     List<FollowVO> findAllSigned(Integer salesmanId);
 
+    /** 近3个月已合作商家明细（用于 Excel 导出） */
+    @Select("SELECT mf.id, mf.merchant_id, mf.status, mf.follow_record, mf.voucher_url, " +
+            "mf.commission, mf.earned_commission AS earnedCommission, " +
+            "mf.updated_at, mf.cooperation_time, " +
+            "m.name AS merchant_name, m.contact_person, m.contact_phone, m.license_no, m.address " +
+            "FROM merchant_follow mf " +
+            "LEFT JOIN merchant m ON mf.merchant_id = m.id " +
+            "WHERE mf.salesman_id = #{salesmanId} AND mf.status = 2 " +
+            "AND mf.cooperation_time >= DATE_SUB(NOW(), INTERVAL 3 MONTH) " +
+            "ORDER BY mf.cooperation_time DESC")
+    List<FollowVO> findSignedLast3Months(Integer salesmanId);
+
+    /**
+     * 近3个月业绩走势（按自然月分组）
+     * 返回字段：period(yyyy-MM), signCount, cooperationAmount（合作金额）, earnedCommission（到账佣金）
+     */
+    @Select("SELECT DATE_FORMAT(cooperation_time, '%Y-%m') AS period, " +
+            "COUNT(*) AS signCount, " +
+            "COALESCE(SUM(commission), 0) AS cooperationAmount, " +
+            "COALESCE(SUM(earned_commission), 0) AS earnedCommission " +
+            "FROM merchant_follow " +
+            "WHERE salesman_id = #{salesmanId} AND status = 2 " +
+            "AND cooperation_time >= DATE_SUB(NOW(), INTERVAL 3 MONTH) " +
+            "GROUP BY period ORDER BY period ASC")
+    List<Map<String, Object>> trendLast3Months(Integer salesmanId);
+
     /**
      * 近6个月业绩走势（按自然月分组）
      * 返回字段：period(yyyy-MM), signCount, commission（实际到账佣金）

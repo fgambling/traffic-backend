@@ -280,13 +280,17 @@ public class AdminSalesmanController {
                 .set(MerchantFollow::getStatus, 2)
                 .set(MerchantFollow::getCooperationTime, now));
         // 将线索商家升级为正式商家（is_lead=0，status=1），使其出现在商家管理中
+        // 同时为没有密码的商家设置默认密码 123456（手机号登录）
         Merchant merchant = merchantMapper.selectById(follow.getMerchantId());
-        if (merchant != null && Integer.valueOf(1).equals(merchant.getIsLead())) {
-            merchantMapper.update(null,
-                    new LambdaUpdateWrapper<Merchant>()
-                            .eq(Merchant::getId, follow.getMerchantId())
-                            .set(Merchant::getIsLead, 0)
-                            .set(Merchant::getStatus, 1));
+        if (merchant != null) {
+            LambdaUpdateWrapper<Merchant> mw = new LambdaUpdateWrapper<Merchant>()
+                    .eq(Merchant::getId, follow.getMerchantId())
+                    .set(Merchant::getIsLead, 0)
+                    .set(Merchant::getStatus, 1);
+            if (!StringUtils.hasText(merchant.getPassword())) {
+                mw.set(Merchant::getPassword, passwordEncoder.encode("123456"));
+            }
+            merchantMapper.update(null, mw);
         }
 
         // 计算佣金

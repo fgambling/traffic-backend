@@ -17,7 +17,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 登录鉴权接口
@@ -73,32 +76,91 @@ public class AuthController {
     }
 
     /**
-     * 商家手机号+密码登录
+     * 商家手机号+密码登录（第一步）
      * POST /api/auth/merchant-login
      * body: { "phone": "138xxx", "password": "123456" }
+     * 返回：单商家直接返回 token；多商家返回 { needSelect: true, merchants: [...] }
      */
     @PostMapping("/merchant-login")
-    public R<LoginResponse> merchantLogin(@RequestBody Map<String, String> body) {
+    public R<Map<String, Object>> merchantLogin(@RequestBody Map<String, String> body) {
         String phone    = body.get("phone");
         String password = body.get("password");
         if (!StringUtils.hasText(phone) || !StringUtils.hasText(password)) {
             throw new BusinessException(400, "手机号和密码不能为空");
         }
 
-        Merchant m = merchantMapper.selectOne(
+        // 查该手机号下所有未禁用商家
+        List<Merchant> all = merchantMapper.selectList(
                 new LambdaQueryWrapper<Merchant>()
                         .eq(Merchant::getContactPhone, phone)
-                        .last("LIMIT 1"));
+                        .ne(Merchant::getStatus, 2));
 
-        if (m == null || !StringUtils.hasText(m.getPassword())
-                || !passwordEncoder.matches(password, m.getPassword())) {
-            throw new BusinessException(401, "手机号或密码错误");
+        if (all.isEmpty()) throw new BusinessException(401, "手机号或密码错误");
+
+        // 找出密码匹配的商家（同一老板不同店密码可能不同）
+        List<Merchant> owned = all.stream()
+                .filter(m -> StringUtils.hasText(m.getPassword())
+                        && passwordEncoder.matches(password, m.getPassword()))
+                .collect(Collectors.toList());
+
+        if (owned.isEmpty()) throw new BusinessException(401, "手机号或密码错误");
+
+        // 只有一家店，直接登录
+        if (owned.size() == 1) {
+            Merchant m = owned.get(0);
+            String token = jwtUtil.generateToken(m.getId(), "merchant", m.getId());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("needSelect", false);
+            result.put("token",      token);
+            result.put("role",       "merchant");
+            result.put("userId",     m.getId());
+            result.put("merchantId", m.getId());
+            result.put("name",       m.getName());
+            return R.ok(result);
         }
-        if (m.getStatus() == 2) {
-            throw new BusinessException(403, "账号已禁用，请联系管理员");
-        }
+
+        // 多家店，返回列表让前端选择
+        List<Map<String, Object>> merchantList = owned.stream().map(m -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("merchantId", m.getId());
+            item.put("name",       m.getName());
+            item.put("address",    m.getAddress());
+            item.put("licenseNo",  m.getLicenseNo());
+            return item;
+        }).collect(Collectors.toList());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("needSelect", true);
+        result.put("phone",      phone);
+        result.put("merchants",  merchantList);
+        return R.ok(result);
+    }
+
+    /**
+     * 商家选择店铺登录（第二步，仅多商家时调用）
+     * POST /api/auth/merchant-select
+     * body: { "phone": "138xxx", "merchantId": 3 }
+     */
+    @PostMapping("/merchant-select")
+    public R<Map<String, Object>> merchantSelect(@RequestBody Map<String, Object> body) {
+        String phone      = (String) body.get("phone");
+        Integer merchantId = ((Number) body.get("merchantId")).intValue();
+
+        // 验证该 merchantId 确实属于这个手机号（防篡改）
+        Merchant m = merchantMapper.selectOne(
+                new LambdaQueryWrapper<Merchant>()
+                        .eq(Merchant::getId, merchantId)
+                        .eq(Merchant::getContactPhone, phone)
+                        .ne(Merchant::getStatus, 2));
+        if (m == null) throw new BusinessException(403, "非法请求");
 
         String token = jwtUtil.generateToken(m.getId(), "merchant", m.getId());
-        return R.ok(new LoginResponse(token, "merchant", m.getId(), m.getId(), m.getName()));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("token",      token);
+        result.put("role",       "merchant");
+        result.put("userId",     m.getId());
+        result.put("merchantId", m.getId());
+        result.put("name",       m.getName());
+        return R.ok(result);
     }
 }

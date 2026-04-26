@@ -98,9 +98,18 @@ public class AdminMerchantController {
     /** 编辑商家信息 */
     @PutMapping("/{id}")
     public R<Void> update(@PathVariable Integer id, @RequestBody Map<String, Object> body) {
+        // 营业执照号重复检测（不区分大小写）
+        if (body.containsKey("licenseNo") && StringUtils.hasText((String) body.get("licenseNo"))) {
+            String newLicense = ((String) body.get("licenseNo")).trim().toUpperCase();
+            long count = merchantMapper.selectCount(new LambdaQueryWrapper<Merchant>()
+                    .apply("UPPER(license_no) = {0}", newLicense)
+                    .ne(Merchant::getId, id));
+            if (count > 0) throw new BusinessException(409, "营业执照号已存在，无法修改");
+        }
+
         LambdaUpdateWrapper<Merchant> wrapper = new LambdaUpdateWrapper<Merchant>().eq(Merchant::getId, id);
         if (body.containsKey("name"))          wrapper.set(Merchant::getName,          body.get("name"));
-        if (body.containsKey("licenseNo"))     wrapper.set(Merchant::getLicenseNo,     body.get("licenseNo"));
+        if (body.containsKey("licenseNo"))     wrapper.set(Merchant::getLicenseNo,     ((String) body.get("licenseNo")).trim().toUpperCase());
         if (body.containsKey("contactPerson")) wrapper.set(Merchant::getContactPerson, body.get("contactPerson"));
         if (body.containsKey("contactPhone"))  wrapper.set(Merchant::getContactPhone,  body.get("contactPhone"));
         if (body.containsKey("address"))       wrapper.set(Merchant::getAddress,       body.get("address"));
@@ -130,10 +139,13 @@ public class AdminMerchantController {
         Merchant m = merchantMapper.selectById(id);
         if (m == null) throw new com.traffic.common.BusinessException(404, "商家不存在");
         if (m.getStatus() != 0) throw new com.traffic.common.BusinessException(400, "该商家已激活");
-        merchantMapper.update(null,
-                new LambdaUpdateWrapper<Merchant>()
-                        .eq(Merchant::getId, id)
-                        .set(Merchant::getStatus, 1));
+        LambdaUpdateWrapper<Merchant> mw = new LambdaUpdateWrapper<Merchant>()
+                .eq(Merchant::getId, id)
+                .set(Merchant::getStatus, 1);
+        if (!StringUtils.hasText(m.getPassword())) {
+            mw.set(Merchant::getPassword, passwordEncoder.encode("123456"));
+        }
+        merchantMapper.update(null, mw);
         AdminSystemController.writeLog("admin", "merchant", "审批通过商家「" + m.getName() + "」", "admin");
         return R.ok(null);
     }

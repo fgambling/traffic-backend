@@ -1,5 +1,7 @@
 package com.traffic.merchant.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.traffic.common.BusinessException;
 import com.traffic.common.ErrorCode;
 import com.traffic.common.R;
@@ -7,16 +9,23 @@ import com.traffic.merchant.dto.DashboardResponse;
 import com.traffic.merchant.dto.ProfileResponse;
 import com.traffic.merchant.dto.StayAnalysisResponse;
 import com.traffic.merchant.dto.TrendPoint;
+import com.traffic.merchant.entity.Merchant;
+import com.traffic.merchant.mapper.MerchantMapper;
 import com.traffic.merchant.service.MerchantService;
 import com.traffic.security.JwtPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 商家端接口
@@ -27,7 +36,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MerchantController {
 
-  private final MerchantService merchantService;
+  private final MerchantService   merchantService;
+  private final MerchantMapper    merchantMapper;
+  private final PasswordEncoder   passwordEncoder;
 
   /**
    * 获取今日客流看板
@@ -110,6 +121,77 @@ public class MerchantController {
    * @param start 开始日期，格式 yyyy-MM-dd，不传时默认今天
    * @param end   结束日期，格式 yyyy-MM-dd，不传时默认今天
    */
+  /**
+   * 获取当前账号下所有门店（同手机号）
+   * GET /api/merchant/stores
+   * 返回：{ phone, stores: [{ merchantId, name, address, licenseNo }] }
+   */
+  @GetMapping("/stores")
+  public R<Map<String, Object>> stores(@AuthenticationPrincipal JwtPrincipal principal) {
+    if (!"merchant".equals(principal.getRole())) throw new BusinessException(ErrorCode.FORBIDDEN);
+
+    Merchant current = merchantMapper.selectById(principal.getMerchantId());
+    if (current == null) throw new BusinessException(404, "商家不存在");
+
+    String phone = current.getContactPhone();
+    List<Map<String, Object>> list;
+
+    if (phone == null || phone.isBlank()) {
+      // 无手机号则只返回自身
+      list = List.of(buildStoreItem(current));
+    } else {
+      list = merchantMapper.selectList(
+              new LambdaQueryWrapper<Merchant>()
+                      .eq(Merchant::getContactPhone, phone)
+                      .ne(Merchant::getStatus, 2))
+          .stream()
+          .map(this::buildStoreItem)
+          .collect(Collectors.toList());
+    }
+
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("phone",   phone);
+    result.put("stores",  list);
+    return R.ok(result);
+  }
+
+  /**
+   * 修改密码
+   * PUT /api/merchant/password
+   * body: { oldPassword, newPassword }
+   */
+  @PutMapping("/password")
+  public R<Void> changePassword(@AuthenticationPrincipal JwtPrincipal principal,
+                                @RequestBody Map<String, String> body) {
+    if (!"merchant".equals(principal.getRole())) throw new BusinessException(ErrorCode.FORBIDDEN);
+
+    String oldPwd = body.get("oldPassword");
+    String newPwd = body.get("newPassword");
+    if (!StringUtils.hasText(oldPwd) || !StringUtils.hasText(newPwd))
+      throw new BusinessException(400, "参数不能为空");
+    if (newPwd.length() < 6)
+      throw new BusinessException(400, "新密码不能少于6位");
+
+    Merchant m = merchantMapper.selectById(principal.getMerchantId());
+    if (m == null) throw new BusinessException(404, "商家不存在");
+    if (!StringUtils.hasText(m.getPassword()) || !passwordEncoder.matches(oldPwd, m.getPassword()))
+      throw new BusinessException(400, "原密码错误");
+
+    merchantMapper.update(null, new LambdaUpdateWrapper<Merchant>()
+        .eq(Merchant::getId, principal.getMerchantId())
+        .set(Merchant::getPassword, passwordEncoder.encode(newPwd)));
+    return R.ok(null);
+  }
+
+  private Map<String, Object> buildStoreItem(Merchant m) {
+    Map<String, Object> item = new LinkedHashMap<>();
+    item.put("merchantId", m.getId());
+    item.put("name",       m.getName());
+    item.put("address",    m.getAddress());
+    item.put("licenseNo",  m.getLicenseNo());
+    return item;
+  }
+
   @GetMapping("/profile")
   public R<ProfileResponse> profile(
       @AuthenticationPrincipal JwtPrincipal principal,

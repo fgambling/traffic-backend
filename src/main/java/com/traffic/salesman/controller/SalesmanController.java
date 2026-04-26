@@ -184,7 +184,7 @@ public class SalesmanController {
 
         Merchant existing = merchantMapper.selectOne(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Merchant>()
-                        .eq(Merchant::getLicenseNo, licenseNo.trim()).last("LIMIT 1"));
+                        .apply("UPPER(license_no) = {0}", licenseNo.trim().toUpperCase()).last("LIMIT 1"));
         if (existing == null) return R.ok(Map.of("type", "ok"));
 
         // 查找该商家的有效跟进（排除已失效）
@@ -358,11 +358,11 @@ public class SalesmanController {
             throw new BusinessException(409, "该商家已在您的跟进列表中");
         }
 
-        // 营业执照重复检测：merchant 表全局唯一约束，同时给出友好提示
+        // 营业执照重复检测（不区分大小写）
         if (StringUtils.hasText(req.getLicenseNo())) {
             Merchant licMerchant = merchantMapper.selectOne(
                     new LambdaQueryWrapper<Merchant>()
-                            .eq(Merchant::getLicenseNo, req.getLicenseNo().trim())
+                            .apply("UPPER(license_no) = {0}", req.getLicenseNo().trim().toUpperCase())
                             .last("LIMIT 1"));
             if (licMerchant != null) {
                 // 判断是否为自己名下且状态不为已失效
@@ -382,7 +382,7 @@ public class SalesmanController {
         merchant.setName(req.getName().trim());
         merchant.setContactPerson(req.getContactPerson());
         merchant.setContactPhone(req.getContactPhone());
-        if (StringUtils.hasText(req.getLicenseNo())) merchant.setLicenseNo(req.getLicenseNo());
+        if (StringUtils.hasText(req.getLicenseNo())) merchant.setLicenseNo(req.getLicenseNo().trim().toUpperCase());
         merchant.setAddress(req.getAddress());
         merchant.setStatus(0);  // 待激活
         merchant.setIsLead(1);  // 业务员添加的线索，不在后台商家管理中显示
@@ -478,6 +478,9 @@ public class SalesmanController {
             String fromLabel = labelMap.getOrDefault(follow.getStatus(), "未知");
             String toLabel   = labelMap.getOrDefault(targetStatus, "未知");
             StringBuilder content = new StringBuilder("跟进状态变更：").append(fromLabel).append(" → ").append(toLabel);
+            if (applyingCooperation && req.getAmount() != null) {
+                content.append("\n合作金额：¥").append(req.getAmount().toPlainString());
+            }
             if (StringUtils.hasText(req.getRemark())) {
                 content.append("\n备注：").append(req.getRemark().trim());
             }
@@ -485,6 +488,9 @@ public class SalesmanController {
             record.setFollowId(id);
             record.setType("status");
             record.setContent(content.toString());
+            if (applyingCooperation && StringUtils.hasText(req.getVoucherUrl())) {
+                record.setImageUrl(req.getVoucherUrl());
+            }
             followRecordMapper.insert(record);
         }
 
@@ -538,6 +544,29 @@ public class SalesmanController {
         if (Integer.valueOf(3).equals(merchantFollow.getStatus())) {
             throw new BusinessException(400, "已失效商家无法更改信息");
         }
+        if (Integer.valueOf(2).equals(merchantFollow.getStatus())) {
+            throw new BusinessException(400, "已合作商家无法更改信息");
+        }
+
+        // 营业执照号重复检测（不区分大小写，排除已失效商家）
+        if (body.containsKey("licenseNo") && StringUtils.hasText((String) body.get("licenseNo"))) {
+            String newLicense = ((String) body.get("licenseNo")).trim().toUpperCase();
+            Merchant conflict = merchantMapper.selectOne(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Merchant>()
+                            .apply("UPPER(license_no) = {0}", newLicense)
+                            .ne(Merchant::getId, merchantId)
+                            .last("LIMIT 1"));
+            if (conflict != null) {
+                // 该商家是否有任意非失效跟进（status != 3）
+                long activeFollows = followMapper.selectCount(
+                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MerchantFollow>()
+                                .eq(MerchantFollow::getMerchantId, conflict.getId())
+                                .ne(MerchantFollow::getStatus, 3));
+                if (activeFollows > 0) {
+                    throw new BusinessException(409, "已有使用该营业执照号的商家，无法修改");
+                }
+            }
+        }
 
         LambdaUpdateWrapper<Merchant> w = new LambdaUpdateWrapper<Merchant>()
                 .eq(Merchant::getId, merchantId);
@@ -545,7 +574,7 @@ public class SalesmanController {
         if (body.containsKey("contactPerson")) w.set(Merchant::getContactPerson, body.get("contactPerson"));
         if (body.containsKey("contactPhone"))  w.set(Merchant::getContactPhone,  body.get("contactPhone"));
         if (body.containsKey("address"))       w.set(Merchant::getAddress,       body.get("address"));
-        if (body.containsKey("licenseNo"))     w.set(Merchant::getLicenseNo,     body.get("licenseNo"));
+        if (body.containsKey("licenseNo"))     w.set(Merchant::getLicenseNo,     ((String) body.get("licenseNo")).trim().toUpperCase());
         merchantMapper.update(null, w);
         return R.ok(null);
     }
@@ -784,7 +813,7 @@ public class SalesmanController {
 
     /**
      * GET /api/salesman/performance/export
-     * 导出业绩 Excel，保存到 uploads/ 后返回下载 URL
+     * 导出近3个月业绩 Excel（总览 + 商家明细），保存到 uploads/ 后返回下载 URL
      */
     @GetMapping("/performance/export")
     public R<Map<String, String>> exportPerformance(
@@ -793,88 +822,119 @@ public class SalesmanController {
         int sid = s.getId();
 
         // ── 数据准备 ──────────────────────────────────────────
-        BigDecimal monthWithdraw = withdrawMapper.sumMonthWithdraw(sid);
-        List<Map<String, Object>> monthTrend = buildTrendFull(
-                followMapper.trendByMonth(sid), buildMonthLabels(6));
-        List<FollowVO> signedList = followMapper.findAllSigned(sid);
+        List<String> monthLabels = buildMonthLabels(3);  // 近3个自然月
+        List<Map<String, Object>> rawTrend = followMapper.trendLast3Months(sid);
+        // 按 period 索引方便补0
+        Map<String, Map<String, Object>> trendByPeriod = rawTrend.stream()
+                .collect(Collectors.toMap(m -> String.valueOf(m.get("period")), m -> m));
+
+        List<FollowVO> detailList = followMapper.findSignedLast3Months(sid);
 
         // ── 构建 Workbook ─────────────────────────────────────
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
 
-            // 样式：加粗标题
-            CellStyle titleStyle = wb.createCellStyle();
-            Font titleFont = wb.createFont();
-            titleFont.setBold(true);
-            titleStyle.setFont(titleFont);
+            // ── 公共样式 ──────────────────────────────────────
+            CellStyle headerStyle = wb.createCellStyle();
+            Font headerFont = wb.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
 
-            // Sheet1：业绩概览
-            Sheet sheet1 = wb.createSheet("业绩概览");
-            sheet1.setColumnWidth(0, 6000); sheet1.setColumnWidth(1, 5000);
-            String[][] summary = {
-                {"指标", "数值"},
-                {"本月签约商家数", String.valueOf(followMapper.countMonthSign(sid))},
-                {"本月新增商家数", String.valueOf(followMapper.countMonthNew(sid))},
-                {"待结算佣金(元)", s.getBalance().toPlainString()},
-                {"本月提现金额(元)", monthWithdraw.toPlainString()},
-                {"累计佣金(元)", s.getTotalCommission().toPlainString()},
-                {"跟进中商家数", String.valueOf(followMapper.countByStatus(sid, 1))},
-                {"已合作商家数", String.valueOf(followMapper.countByStatus(sid, 2))},
-                {"已流失商家数", String.valueOf(followMapper.countByStatus(sid, 3))},
+            CellStyle labelStyle = wb.createCellStyle();
+            Font labelFont = wb.createFont();
+            labelFont.setBold(true);
+            labelStyle.setFont(labelFont);
+
+            // ── Sheet1：近三个月总览 ──────────────────────────
+            Sheet sheet1 = wb.createSheet("近三个月总览");
+            sheet1.setColumnWidth(0, 5500);
+            sheet1.setColumnWidth(1, 5000);
+            sheet1.setColumnWidth(2, 5500);
+            sheet1.setColumnWidth(3, 5500);
+
+            // 标题行
+            Row h1 = sheet1.createRow(0);
+            String[] cols1 = {"月份", "签约商家数", "合作金额(元)", "到账佣金(元)"};
+            for (int j = 0; j < cols1.length; j++) {
+                Cell c = h1.createCell(j);
+                c.setCellValue(cols1[j]);
+                c.setCellStyle(headerStyle);
+            }
+
+            // 月份数据行
+            BigDecimal totalCoopAmt = BigDecimal.ZERO;
+            BigDecimal totalEarned  = BigDecimal.ZERO;
+            int totalSign = 0;
+            for (int i = 0; i < monthLabels.size(); i++) {
+                String period = monthLabels.get(i);
+                Map<String, Object> row = trendByPeriod.getOrDefault(period, Collections.emptyMap());
+                int signCount = row.isEmpty() ? 0 : ((Number) row.get("signCount")).intValue();
+                BigDecimal coopAmt = row.isEmpty() ? BigDecimal.ZERO
+                        : new BigDecimal(row.get("cooperationAmount").toString());
+                BigDecimal earned = row.isEmpty() ? BigDecimal.ZERO
+                        : new BigDecimal(row.get("earnedCommission").toString());
+
+                totalSign += signCount;
+                totalCoopAmt = totalCoopAmt.add(coopAmt);
+                totalEarned  = totalEarned.add(earned);
+
+                Row r = sheet1.createRow(i + 1);
+                r.createCell(0).setCellValue(period);
+                r.createCell(1).setCellValue(signCount);
+                r.createCell(2).setCellValue(coopAmt.toPlainString());
+                r.createCell(3).setCellValue(earned.toPlainString());
+            }
+
+            // 合计行
+            Row totalRow = sheet1.createRow(monthLabels.size() + 1);
+            Cell tc0 = totalRow.createCell(0); tc0.setCellValue("合计"); tc0.setCellStyle(labelStyle);
+            Cell tc1 = totalRow.createCell(1); tc1.setCellValue(totalSign); tc1.setCellStyle(labelStyle);
+            Cell tc2 = totalRow.createCell(2); tc2.setCellValue(totalCoopAmt.toPlainString()); tc2.setCellStyle(labelStyle);
+            Cell tc3 = totalRow.createCell(3); tc3.setCellValue(totalEarned.toPlainString()); tc3.setCellStyle(labelStyle);
+
+            // 空一行后附加累计账户数据
+            int extraRow = monthLabels.size() + 3;
+            String[][] accountInfo = {
+                {"账户余额(元)",   s.getBalance().toPlainString()},
+                {"累计佣金(元)",   s.getTotalCommission().toPlainString()},
+                {"跟进中商家数",   String.valueOf(followMapper.countByStatus(sid, 1))},
+                {"已合作商家数",   String.valueOf(followMapper.countByStatus(sid, 2))},
             };
-            for (int i = 0; i < summary.length; i++) {
-                Row row = sheet1.createRow(i);
-                for (int j = 0; j < 2; j++) {
-                    Cell cell = row.createCell(j);
-                    cell.setCellValue(summary[i][j]);
-                    if (i == 0) cell.setCellStyle(titleStyle);
-                }
+            for (String[] kv : accountInfo) {
+                Row r = sheet1.createRow(extraRow++);
+                Cell k = r.createCell(0); k.setCellValue(kv[0]); k.setCellStyle(labelStyle);
+                r.createCell(1).setCellValue(kv[1]);
             }
 
-            // Sheet2：月度走势
-            Sheet sheet2 = wb.createSheet("月度走势");
-            sheet2.setColumnWidth(0, 4000);
-            sheet2.setColumnWidth(1, 4000);
-            sheet2.setColumnWidth(2, 5000);
+            // ── Sheet2：商家明细 ──────────────────────────────
+            Sheet sheet2 = wb.createSheet("商家明细");
+            int[] widths2 = {5500, 4000, 4500, 5500, 5000, 5500, 5500};
+            for (int w = 0; w < widths2.length; w++) sheet2.setColumnWidth(w, widths2[w]);
+
+            String[] cols2 = {"商家名称", "联系人", "联系电话", "营业执照号", "合作时间", "合作金额(元)", "到账佣金(元)"};
             Row h2 = sheet2.createRow(0);
-            for (String[] hd : new String[][]{{"月份","签约数","佣金(元)"}}) {
-                for (int j = 0; j < hd.length; j++) {
-                    Cell c = h2.createCell(j); c.setCellValue(hd[j]); c.setCellStyle(titleStyle);
-                }
-            }
-            for (int i = 0; i < monthTrend.size(); i++) {
-                Map<String, Object> tr = monthTrend.get(i);
-                Row r = sheet2.createRow(i + 1);
-                r.createCell(0).setCellValue(String.valueOf(tr.get("period")));
-                r.createCell(1).setCellValue(((Number) tr.get("signCount")).intValue());
-                r.createCell(2).setCellValue(((BigDecimal) tr.get("commission")).toPlainString());
+            for (int j = 0; j < cols2.length; j++) {
+                Cell c = h2.createCell(j);
+                c.setCellValue(cols2[j]);
+                c.setCellStyle(headerStyle);
             }
 
-            // Sheet3：签约商家列表
-            Sheet sheet3 = wb.createSheet("签约商家");
-            int[] widths = {5000, 4000, 4000, 4000, 5000, 4000};
-            for (int w = 0; w < widths.length; w++) sheet3.setColumnWidth(w, widths[w]);
-            String[] headers3 = {"商家名称","联系人","联系电话","营业执照","合作时间","佣金(元)"};
-            Row h3 = sheet3.createRow(0);
-            for (int j = 0; j < headers3.length; j++) {
-                Cell c = h3.createCell(j); c.setCellValue(headers3[j]); c.setCellStyle(titleStyle);
-            }
             DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-            for (int i = 0; i < signedList.size(); i++) {
-                FollowVO vo = signedList.get(i);
-                Row r = sheet3.createRow(i + 1);
-                r.createCell(0).setCellValue(vo.getMerchantName() != null ? vo.getMerchantName() : "");
-                r.createCell(1).setCellValue(vo.getContactPerson() != null ? vo.getContactPerson() : "");
-                r.createCell(2).setCellValue(vo.getContactPhone() != null ? vo.getContactPhone() : "");
-                r.createCell(3).setCellValue(vo.getLicenseNo() != null ? vo.getLicenseNo() : "");
+            for (int i = 0; i < detailList.size(); i++) {
+                FollowVO vo = detailList.get(i);
+                Row r = sheet2.createRow(i + 1);
+                r.createCell(0).setCellValue(vo.getMerchantName()    != null ? vo.getMerchantName()    : "");
+                r.createCell(1).setCellValue(vo.getContactPerson()   != null ? vo.getContactPerson()   : "");
+                r.createCell(2).setCellValue(vo.getContactPhone()    != null ? vo.getContactPhone()    : "");
+                r.createCell(3).setCellValue(vo.getLicenseNo()       != null ? vo.getLicenseNo()       : "");
                 r.createCell(4).setCellValue(vo.getCooperationTime() != null ? vo.getCooperationTime().format(dtf) : "");
-                r.createCell(5).setCellValue(vo.getEarnedCommission() != null ? vo.getEarnedCommission().toPlainString() : "0");
+                r.createCell(5).setCellValue(vo.getCommission()      != null ? vo.getCommission().toPlainString()      : "0.00");
+                r.createCell(6).setCellValue(vo.getEarnedCommission()!= null ? vo.getEarnedCommission().toPlainString(): "0.00");
             }
 
             // ── 保存到 uploads/ ───────────────────────────────
             String uploadDir = Paths.get(System.getProperty("user.dir"), "uploads").toString();
             new File(uploadDir).mkdirs();
-            String filename = "performance_" + s.getId() + "_"
-                    + System.currentTimeMillis() + ".xlsx";
+            String filename = "performance_" + s.getId() + "_" + System.currentTimeMillis() + ".xlsx";
             wb.write(Files.newOutputStream(Paths.get(uploadDir, filename)));
 
             Map<String, String> result = new LinkedHashMap<>();
