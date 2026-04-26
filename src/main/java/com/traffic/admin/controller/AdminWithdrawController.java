@@ -10,6 +10,7 @@ import com.traffic.salesman.entity.WithdrawApply;
 import com.traffic.salesman.mapper.SalesmanMapper;
 import com.traffic.salesman.mapper.WithdrawApplyMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 后台提现审核接口
@@ -30,20 +32,33 @@ public class AdminWithdrawController {
     private final SalesmanMapper salesmanMapper;
 
     /**
-     * GET /api/admin/withdraw?status=&salesmanId=&page=1&size=15
-     * 列出全部提现申请（可按状态/业务员过滤）
+     * GET /api/admin/withdraw?status=&salesmanName=&page=1&size=15
+     * 列出全部提现申请（可按状态/业务员姓名过滤）
      */
     @GetMapping
     public R<Map<String, Object>> list(
             @RequestParam(required = false) Integer status,
-            @RequestParam(required = false) Integer salesmanId,
+            @RequestParam(required = false) String salesmanName,
             @RequestParam(defaultValue = "1")  int page,
             @RequestParam(defaultValue = "15") int size) {
 
+        // 按姓名查出匹配的业务员ID列表
+        List<Integer> salesmanIds = null;
+        if (StringUtils.hasText(salesmanName)) {
+            salesmanIds = salesmanMapper.selectList(
+                    new LambdaQueryWrapper<Salesman>()
+                            .like(Salesman::getName, salesmanName))
+                    .stream().map(Salesman::getId).collect(Collectors.toList());
+            if (salesmanIds.isEmpty()) {
+                return R.ok(Map.of("list", List.of(), "total", 0));
+            }
+        }
+
         Page<WithdrawApply> pageObj = new Page<>(page, size);
+        List<Integer> finalIds = salesmanIds;
         LambdaQueryWrapper<WithdrawApply> wrapper = new LambdaQueryWrapper<WithdrawApply>()
                 .eq(status != null, WithdrawApply::getStatus, status)
-                .eq(salesmanId != null, WithdrawApply::getSalesmanId, salesmanId)
+                .in(finalIds != null, WithdrawApply::getSalesmanId, finalIds != null ? finalIds : List.of())
                 .orderByDesc(WithdrawApply::getCreatedAt);
         withdrawMapper.selectPage(pageObj, wrapper);
 

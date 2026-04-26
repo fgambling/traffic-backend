@@ -16,6 +16,7 @@ import com.traffic.salesman.mapper.FollowRecordMapper;
 import com.traffic.salesman.mapper.MerchantFollowMapper;
 import com.traffic.salesman.entity.Salesman;
 import com.traffic.salesman.mapper.SalesmanMapper;
+import com.traffic.salesman.mapper.WithdrawApplyMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.util.StringUtils;
@@ -41,6 +42,7 @@ public class AdminSalesmanController {
     private final MerchantFollowMapper followMapper;
     private final FollowRecordMapper followRecordMapper;
     private final MerchantMapper merchantMapper;
+    private final WithdrawApplyMapper withdrawMapper;
 
     // ─── 业务员管理 ───────────────────────────────────────────
 
@@ -58,7 +60,20 @@ public class AdminSalesmanController {
                 .eq(status != null, Salesman::getStatus, status)
                 .orderByDesc(Salesman::getId);
         salesmanMapper.selectPage(pageObj, wrapper);
-        return R.ok(Map.of("list", pageObj.getRecords(), "total", pageObj.getTotal()));
+
+        List<Map<String, Object>> enriched = pageObj.getRecords().stream().map(s -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id",              s.getId());
+            item.put("name",            s.getName());
+            item.put("phone",           s.getPhone());
+            item.put("status",          s.getStatus());
+            item.put("totalCommission", s.getTotalCommission());
+            item.put("balance",         s.getBalance());
+            item.put("withdrawnAmount", withdrawMapper.sumApprovedWithdraw(s.getId()));
+            item.put("createdAt",       s.getCreatedAt());
+            return item;
+        }).toList();
+        return R.ok(Map.of("list", enriched, "total", pageObj.getTotal()));
     }
 
     /** POST /api/admin/salesmen — 新增业务员 */
@@ -195,6 +210,26 @@ public class AdminSalesmanController {
         return R.ok(data);
     }
 
+    /**
+     * GET /api/admin/merchant/{merchantId}/followers
+     * 返回该商家所有活跃跟进业务员（非已失效/审批失败），含姓名和电话
+     */
+    @GetMapping("/merchant/{merchantId}/followers")
+    public R<List<Map<String, Object>>> merchantFollowers(@PathVariable Integer merchantId) {
+        List<MerchantFollow> follows = followMapper.selectList(
+                new LambdaQueryWrapper<MerchantFollow>()
+                        .eq(MerchantFollow::getMerchantId, merchantId)
+                        .notIn(MerchantFollow::getStatus, 3, 5));
+        List<Map<String, Object>> result = follows.stream().map(f -> {
+            Salesman s = salesmanMapper.selectById(f.getSalesmanId());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name",  s != null ? s.getName()  : "");
+            m.put("phone", s != null ? s.getPhone() : "");
+            return m;
+        }).toList();
+        return R.ok(result);
+    }
+
     // ─── 合作申请审批 ─────────────────────────────────────────
 
     /**
@@ -220,7 +255,9 @@ public class AdminSalesmanController {
      */
     @GetMapping("/follow/{id}/records")
     public R<List<FollowRecord>> followRecords(@PathVariable Integer id) {
-        return R.ok(followRecordMapper.findByFollowId(id));
+        MerchantFollow follow = followMapper.selectById(id);
+        if (follow == null) return R.ok(List.of());
+        return R.ok(followRecordMapper.findByMerchantId(follow.getMerchantId()));
     }
 
     /**
@@ -284,7 +321,7 @@ public class AdminSalesmanController {
                 .toList();
         int coCount = salesmanIds.isEmpty() ? 1 : salesmanIds.size();
 
-        // 结算佣金到业务员账户（联合跟进均分）
+        // 结算佣金到业务员账户（联合跟进均分），并将每人份额写回 merchant_follow.earned_commission
         StringBuilder content = new StringBuilder("管理员审批通过，合作已确认");
         if (commissionAmount != null && commissionAmount.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal share = commissionAmount.divide(
@@ -295,6 +332,11 @@ public class AdminSalesmanController {
                         .eq(Salesman::getId, sid)
                         .setSql("balance = balance + " + shareStr)
                         .setSql("total_commission = total_commission + " + shareStr));
+                // 将实际到账佣金写回对应跟进行
+                followMapper.update(null, new LambdaUpdateWrapper<MerchantFollow>()
+                        .eq(MerchantFollow::getMerchantId, follow.getMerchantId())
+                        .eq(MerchantFollow::getSalesmanId, sid)
+                        .set(MerchantFollow::getEarnedCommission, share));
             }
             if (coCount > 1) {
                 content.append("，佣金共 ¥").append(commissionAmount.toPlainString())

@@ -27,6 +27,7 @@ public class FollowVO {
     private String followRecord;
     private String voucherUrl;
     private BigDecimal commission;
+    private BigDecimal earnedCommission;
     private LocalDateTime cooperationTime;
     private LocalDateTime updatedAt;
 

@@ -34,8 +34,11 @@ public class MerchantFollow {
     /** 合作时间（状态变为2时记录） */
     private LocalDateTime cooperationTime;
 
-    /** 该商家带来的佣金 */
+    /** 合作金额（业务员申请时填写） */
     private BigDecimal commission;
+
+    /** 实际到账佣金（审批通过时写入，联合跟进为均分后的份额） */
+    private BigDecimal earnedCommission;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

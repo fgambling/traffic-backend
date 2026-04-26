@@ -288,17 +288,28 @@ public class SalesmanController {
         if (myFollow == null || !myFollow.getSalesmanId().equals(me.getId()))
             throw new BusinessException(ErrorCode.FORBIDDEN);
 
-        // 为申请人创建跟进记录（状态：接洽中）
+        // 为申请人创建跟进记录（状态与原跟进同步）
         MerchantFollow newFollow = new MerchantFollow();
         newFollow.setSalesmanId(req.getRequesterId());
         newFollow.setMerchantId(myFollow.getMerchantId());
-        newFollow.setStatus(1);
+        newFollow.setStatus(myFollow.getStatus());
+        newFollow.setCommission(myFollow.getCommission());
         followMapper.insert(newFollow);
 
         // 标记申请已同意
         joinRequestMapper.update(null, new LambdaUpdateWrapper<FollowJoinRequest>()
                 .eq(FollowJoinRequest::getId, id)
                 .set(FollowJoinRequest::getStatus, 1));
+
+        // 写入共享历史记录：记录联合跟进加入事件
+        Salesman requester = salesmanMapper.selectById(req.getRequesterId());
+        String requesterName = requester != null ? requester.getName() : "未知业务员";
+        FollowRecord joinRecord = new FollowRecord();
+        joinRecord.setFollowId(myFollow.getId());
+        joinRecord.setType("note");
+        joinRecord.setContent("业务员「" + requesterName + "」加入联合跟进");
+        followRecordMapper.insert(joinRecord);
+
         return R.ok(null);
     }
 
@@ -445,18 +456,20 @@ public class SalesmanController {
                 .eq(MerchantFollow::getId, id)
                 .set(targetStatus != null, MerchantFollow::getStatus, targetStatus)
                 .set(req.getVoucherUrl() != null, MerchantFollow::getVoucherUrl, req.getVoucherUrl())
-                .set(applyingCooperation, MerchantFollow::getCommission, req.getAmount());
+                .set(applyingCooperation, MerchantFollow::getCommission, req.getAmount())
+                .set(applyingCooperation && StringUtils.hasText(req.getRemark()),
+                        MerchantFollow::getFollowRecord, req.getRemark());
         // cooperation_time 在管理员审批通过时才记录
 
         followMapper.update(null, wrapper);
 
         // 状态变更时：同步所有联合跟进的状态，并写入共享历史记录
         if (targetStatus != null && !targetStatus.equals(follow.getStatus())) {
-            // 同步同一商家其他业务员的状态（跳过已失效的）
+            // 同步同一商家其他业务员的状态（跳过已失效和已合作的）
             followMapper.update(null, new LambdaUpdateWrapper<MerchantFollow>()
                     .eq(MerchantFollow::getMerchantId, follow.getMerchantId())
                     .ne(MerchantFollow::getId, id)
-                    .ne(MerchantFollow::getStatus, 3)
+                    .notIn(MerchantFollow::getStatus, 2, 3)
                     .set(MerchantFollow::getStatus, targetStatus)
                     .set(applyingCooperation, MerchantFollow::getCommission, req.getAmount()));
 
@@ -854,7 +867,7 @@ public class SalesmanController {
                 r.createCell(2).setCellValue(vo.getContactPhone() != null ? vo.getContactPhone() : "");
                 r.createCell(3).setCellValue(vo.getLicenseNo() != null ? vo.getLicenseNo() : "");
                 r.createCell(4).setCellValue(vo.getCooperationTime() != null ? vo.getCooperationTime().format(dtf) : "");
-                r.createCell(5).setCellValue(vo.getCommission() != null ? vo.getCommission().toPlainString() : "0");
+                r.createCell(5).setCellValue(vo.getEarnedCommission() != null ? vo.getEarnedCommission().toPlainString() : "0");
             }
 
             // ── 保存到 uploads/ ───────────────────────────────
