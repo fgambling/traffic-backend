@@ -17,4 +17,7 @@ target/
 *.log
 logs/
 
+# 上传文件（运行时生成，不纳入版本控制）
+uploads/
+
 .fake

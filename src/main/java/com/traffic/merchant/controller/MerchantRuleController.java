@@ -16,6 +16,7 @@ import com.traffic.merchant.dto.RuleConfigResponse.CustomRuleDTO;
 import com.traffic.merchant.dto.ToggleRuleRequest;
 import com.traffic.merchant.entity.Merchant;
 import com.traffic.merchant.entity.MerchantConfig;
+import com.traffic.admin.mapper.SystemConfigMapper;
 import com.traffic.merchant.mapper.MerchantConfigMapper;
 import com.traffic.merchant.mapper.MerchantMapper;
 import com.traffic.rule.BuiltinRule;
@@ -39,6 +40,7 @@ public class MerchantRuleController {
 
     private final MerchantMapper merchantMapper;
     private final MerchantConfigMapper merchantConfigMapper;
+    private final SystemConfigMapper systemConfigMapper;
     private final ObjectMapper objectMapper;
 
     /**
@@ -49,9 +51,13 @@ public class MerchantRuleController {
     public R<RuleConfigResponse> listRules(@AuthenticationPrincipal JwtPrincipal principal) {
         Integer merchantId = assertMerchantAndPackage(principal);
 
-        // 内置规则启用状态
+        // 全局禁用集合（管理员控制）
+        Set<String> globalDisabled = loadGlobalDisabledRules();
+
+        // 内置规则启用状态（商家个人开关），全局禁用的规则直接过滤掉
         Map<String, Boolean> enabledMap = loadBuiltinRuleConfig(merchantId);
         List<BuiltinRuleDTO> builtinRules = Arrays.stream(BuiltinRule.values())
+                .filter(r -> !globalDisabled.contains(r.getRuleId()))
                 .map(r -> BuiltinRuleDTO.from(r, enabledMap.getOrDefault(r.getRuleId(), true)))
                 .toList();
 
@@ -177,6 +183,20 @@ public class MerchantRuleController {
     }
 
     /** 加载内置规则启用状态Map，默认全部true */
+    /** 读取管理员全局禁用的规则 ID 集合 */
+    private Set<String> loadGlobalDisabledRules() {
+        String json = systemConfigMapper.getValue("global_rule_config");
+        if (json == null || json.isBlank()) return Set.of();
+        try {
+            Map<String, Boolean> map = objectMapper.readValue(json, new TypeReference<>() {});
+            Set<String> disabled = new HashSet<>();
+            map.forEach((id, enabled) -> { if (!Boolean.TRUE.equals(enabled)) disabled.add(id); });
+            return disabled;
+        } catch (Exception e) {
+            return Set.of();
+        }
+    }
+
     private Map<String, Boolean> loadBuiltinRuleConfig(Integer merchantId) {
         Map<String, Boolean> map = new LinkedHashMap<>();
         for (BuiltinRule r : BuiltinRule.values()) map.put(r.getRuleId(), true);

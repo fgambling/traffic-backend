@@ -70,8 +70,10 @@ public class SecurityConfig {
                 .requestMatchers("/api/device/upload").permitAll()
                 // 微信登录
                 .requestMatchers("/api/auth/**").permitAll()
-                // 后台管理登录（其他 /api/admin/** 需要JWT）
+                // 后台管理登录
                 .requestMatchers("/api/admin/login").permitAll()
+                // 其余 /api/admin/** 必须是 admin 角色
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 // 上传文件的静态访问
                 .requestMatchers("/uploads/**").permitAll()
                 // 其余全部需要登录

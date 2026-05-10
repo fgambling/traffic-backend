@@ -8,8 +8,9 @@ spring:
     name: traffic-backend
 
   # 本地开发时取消注释以启用 dev profile（解锁 /api/auth/dev-login 测试端点）
-  profiles:
-    active: dev
+  # 生产部署时必须保持注释状态
+  # profiles:
+  #   active: dev
 
   # 数据源配置
   datasource:
@@ -41,8 +42,8 @@ spring:
 # MyBatis-Plus配置
 mybatis-plus:
   configuration:
-    # 开启SQL日志打印
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # 开发时可改为 org.apache.ibatis.logging.stdout.StdOutImpl 查看SQL
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
     map-underscore-to-camel-case: true
   global-config:
     db-config:
@@ -65,8 +66,8 @@ jwt:
   # 过期时间：7天（毫秒）
   expiration: 604800000
 
-# 日志配置
+# 日志配置（开发时 com.traffic 可改为 DEBUG 查看详细日志）
 logging:
   level:
-    com.traffic: DEBUG
-    org.springframework.security: INFO
+    com.traffic: INFO
+    org.springframework.security: WARN

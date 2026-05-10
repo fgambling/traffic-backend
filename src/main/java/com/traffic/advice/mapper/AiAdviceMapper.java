@@ -36,6 +36,7 @@ public interface AiAdviceMapper extends BaseMapper<AiAdvice> {
     @Select("<script>" +
             "SELECT * FROM ai_advice " +
             "WHERE merchant_id = #{merchantId} " +
+            "AND (review_status IS NULL OR review_status != 2) " +
             "<if test='adviceType != null'> AND advice_type = #{adviceType} </if>" +
             "<if test='source != null'> AND source = #{source} </if>" +
             "ORDER BY created_at DESC" +
@@ -46,11 +47,30 @@ public interface AiAdviceMapper extends BaseMapper<AiAdvice> {
                                    @Param("source") Integer source);
 
     /**
-     * 按商家聚合建议数量和有用率（用于费用/成本按商家明细）
+     * 统计某商家今日 LLM 调用次数（按 call_id 去重）
      */
-    @Select("SELECT merchant_id AS merchantId, COUNT(1) AS totalCount, " +
-            "SUM(CASE WHEN source = 2 THEN 1 ELSE 0 END) AS aiCount, " +
-            "SUM(CASE WHEN feedback = 1 THEN 1 ELSE 0 END) AS usefulCount " +
-            "FROM ai_advice GROUP BY merchant_id ORDER BY totalCount DESC")
-    List<Map<String, Object>> costByMerchant();
+    @Select("SELECT COUNT(DISTINCT call_id) FROM ai_advice " +
+            "WHERE merchant_id = #{merchantId} AND source = 2 " +
+            "AND call_id IS NOT NULL AND created_at >= #{fromTime}")
+    long countTodayCalls(@Param("merchantId") Integer merchantId,
+                         @Param("fromTime") LocalDateTime fromTime);
+
+    /**
+     * 按商家 + 模型聚合 AI 大模型建议统计（仅 source=2）
+     * 用于按各记录实际使用模型计算精确历史成本
+     */
+    @Select("SELECT m.id AS merchantId, " +
+            "  m.name AS merchantName, " +
+            "  COALESCE(a.model_used, '') AS modelUsed, " +
+            "  COUNT(a.id) AS totalAiCount, " +
+            "  SUM(CASE WHEN DATE(a.created_at) = CURDATE() THEN 1 ELSE 0 END) AS todayAiCount, " +
+            "  MAX(a.created_at) AS lastGenAt, " +
+            "  COALESCE(SUM(LENGTH(a.content)), 0) AS totalContentLen, " +
+            "  COALESCE(SUM(CASE WHEN DATE(a.created_at) = CURDATE() THEN LENGTH(a.content) ELSE 0 END), 0) AS todayContentLen " +
+            "FROM merchant m " +
+            "LEFT JOIN ai_advice a ON a.merchant_id = m.id AND a.source = 2 " +
+            "WHERE m.package_type = 3 AND m.status = 1 " +
+            "GROUP BY m.id, m.name, a.model_used " +
+            "ORDER BY m.id ASC")
+    List<Map<String, Object>> costByMerchantModel();
 }

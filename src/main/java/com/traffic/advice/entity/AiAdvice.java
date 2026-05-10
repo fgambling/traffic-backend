@@ -35,6 +35,15 @@ public class AiAdvice {
     /** 触发时的关键数据快照（JSON字符串） */
     private String dataSnapshot;
 
+    /** 置信度：高/中/低（AI大模型生成时填写） */
+    private String confidence;
+
+    /** LLM调用批次ID（同一次API调用的多条建议共享同一UUID） */
+    private String callId;
+
+    /** 生成建议时实际使用的LLM模型（source=2时记录，用于精确成本核算） */
+    private String modelUsed;
+
     /** 用户反馈：0未反馈 1有用 2无用 */
     private Integer feedback;
 

@@ -49,7 +49,6 @@ public class DeviceServiceImpl implements DeviceService {
     private final RedisTemplate<String, Object> redisTemplate;
 
     private static final String REDIS_KEY_PREFIX = "traffic:realtime:";
-    private static final Duration REDIS_TTL = Duration.ofHours(25);
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -175,14 +174,19 @@ public class DeviceServiceImpl implements DeviceService {
         }
     }
 
-    /** 将今日数据汇总写入Redis（供看板接口使用） */
+    /** 将今日数据汇总写入Redis（供看板接口使用），TTL 精确到当天午夜，零点自动失效 */
     private void updateRedisCache(Integer merchantId) {
         try {
-            LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
+            ZoneId tz = ZoneId.of("Asia/Shanghai");
+            LocalDate today = LocalDate.now(tz);
             List<TrafficFact> todayData = trafficFactMapper.findTodayByMerchant(
                     merchantId, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
             Map<String, Object> summary = aggregateTodaySummary(todayData);
-            redisTemplate.opsForValue().set(REDIS_KEY_PREFIX + merchantId, summary, REDIS_TTL);
+            // TTL = 当天剩余秒数，零点过期后下次请求直接查 MySQL 取新一天数据
+            Duration ttl = Duration.between(
+                    LocalDateTime.now(tz),
+                    today.plusDays(1).atStartOfDay());
+            redisTemplate.opsForValue().set(REDIS_KEY_PREFIX + merchantId, summary, ttl);
         } catch (Exception e) {
             log.error("更新Redis缓存失败，merchantId={}", merchantId, e);
         }

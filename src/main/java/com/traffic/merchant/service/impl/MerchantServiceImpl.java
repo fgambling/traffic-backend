@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -53,6 +54,7 @@ public class MerchantServiceImpl implements MerchantService {
                 resp.setMerchantName(merchant.getName());
                 resp.setPackageType(merchant.getPackageType() != null ? merchant.getPackageType() : 1);
             }
+            resp.setCurrentInStore(calcCurrentInStore(merchantId, resp.getAvgStaySeconds()));
             fillDelta(resp, merchantId, LocalDate.now(ZoneId.of("Asia/Shanghai")));
             return resp;
         }
@@ -67,12 +69,24 @@ public class MerchantServiceImpl implements MerchantService {
                 merchantId, startOfDay, endOfDay);
 
         Map<String, Object> summary = DeviceServiceImpl.aggregateTodaySummary(todayFacts);
+        // 回写 Redis：TTL 设到当天午夜，避免每次缓存未命中都查 MySQL
+        try {
+            Duration ttl = Duration.between(
+                LocalDateTime.now(ZoneId.of("Asia/Shanghai")),
+                today.plusDays(1).atStartOfDay());
+            if (!ttl.isNegative() && !ttl.isZero()) {
+                redisTemplate.opsForValue().set(redisKey, summary, ttl);
+            }
+        } catch (Exception e) {
+            log.warn("回写 Redis 缓存失败 merchantId={}: {}", merchantId, e.getMessage());
+        }
         DashboardResponse resp = buildFromCache(summary, "db");
         Merchant merchant = merchantMapper.selectById(merchantId);
         if (merchant != null) {
             resp.setMerchantName(merchant.getName());
             resp.setPackageType(merchant.getPackageType() != null ? merchant.getPackageType() : 1);
         }
+        resp.setCurrentInStore(calcCurrentInStore(merchantId, resp.getAvgStaySeconds()));
         fillDelta(resp, merchantId, today);
         return resp;
     }
@@ -97,11 +111,18 @@ public class MerchantServiceImpl implements MerchantService {
                 ? Math.round(resp.getGenderFemale() * 1000.0 / total) / 10.0
                 : 0.0);
 
-        // 当前在店预估：简单用总进店数的10%作为近似（实际可用最近10分钟数据计算）
-        // 此处预留逻辑，实际项目可结合实时推流完善
-        resp.setCurrentInStore((int) Math.max(0, resp.getTotalEnter() * 0.1));
-
         return resp;
+    }
+
+    /**
+     * 当前在店预估：统计最近 N 分钟进店人数（N 取今日平均停留时长，最少 30 分钟，最多 90 分钟）。
+     * 非营业时间无新数据则自然返回 0。
+     */
+    private int calcCurrentInStore(Integer merchantId, int avgStaySeconds) {
+        int windowMinutes = Math.min(90, Math.max(30, avgStaySeconds / 60));
+        LocalDateTime now   = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
+        LocalDateTime since = now.minusMinutes(windowMinutes);
+        return trafficFactMapper.sumEnterCount(merchantId, since, now);
     }
 
     /** 计算较昨日进店增减百分比并写入 resp */
