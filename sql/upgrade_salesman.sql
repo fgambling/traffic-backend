@@ -34,4 +34,4 @@ CREATE TABLE IF NOT EXISTS salesman_material (
 -- 修改：merchant_follow 增加凭证图片字段
 -- =============================================
 ALTER TABLE merchant_follow
-    ADD COLUMN IF NOT EXISTS voucher_url VARCHAR(500) COMMENT '合作凭证图片URL' AFTER follow_record;
+    ADD COLUMN voucher_url VARCHAR(500) COMMENT '合作凭证图片URL' AFTER follow_record;

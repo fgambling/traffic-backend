@@ -61,5 +61,5 @@ INSERT IGNORE INTO system_config (config_key, config_value, description) VALUES
 -- ai_advice 增加管理员审核字段
 -- =============================================
 ALTER TABLE ai_advice
-    ADD COLUMN IF NOT EXISTS review_status TINYINT NOT NULL DEFAULT 0 COMMENT '0未审核 1已采纳 2标记待优化' AFTER feedback,
-    ADD COLUMN IF NOT EXISTS admin_note VARCHAR(200) COMMENT '管理员备注' AFTER review_status;
+    ADD COLUMN review_status TINYINT NOT NULL DEFAULT 0 COMMENT '0未审核 1已采纳 2标记待优化' AFTER feedback,
+    ADD COLUMN admin_note VARCHAR(200) COMMENT '管理员备注' AFTER review_status;
