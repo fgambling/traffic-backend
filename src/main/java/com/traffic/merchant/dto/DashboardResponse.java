@@ -40,6 +40,9 @@ public class DashboardResponse {
     /** 套餐类型：1普通 2中级 3高级 */
     private Integer packageType;
 
+    /** 套餐到期日（yyyy-MM-dd），普通版为 null */
+    private String packageExpireAt;
+
     /** 数据来源：cache=缓存，db=数据库 */
     private String dataSource;
 

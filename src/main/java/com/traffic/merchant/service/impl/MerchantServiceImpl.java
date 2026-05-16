@@ -53,6 +53,8 @@ public class MerchantServiceImpl implements MerchantService {
             if (merchant != null) {
                 resp.setMerchantName(merchant.getName());
                 resp.setPackageType(merchant.getPackageType() != null ? merchant.getPackageType() : 1);
+                if (merchant.getPackageExpireAt() != null)
+                    resp.setPackageExpireAt(merchant.getPackageExpireAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
             }
             resp.setCurrentInStore(calcCurrentInStore(merchantId, resp.getAvgStaySeconds()));
             fillDelta(resp, merchantId, LocalDate.now(ZoneId.of("Asia/Shanghai")));
@@ -85,6 +87,8 @@ public class MerchantServiceImpl implements MerchantService {
         if (merchant != null) {
             resp.setMerchantName(merchant.getName());
             resp.setPackageType(merchant.getPackageType() != null ? merchant.getPackageType() : 1);
+            if (merchant.getPackageExpireAt() != null)
+                resp.setPackageExpireAt(merchant.getPackageExpireAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
         }
         resp.setCurrentInStore(calcCurrentInStore(merchantId, resp.getAvgStaySeconds()));
         fillDelta(resp, merchantId, today);

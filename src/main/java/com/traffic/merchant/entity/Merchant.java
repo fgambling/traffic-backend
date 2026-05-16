@@ -3,6 +3,7 @@ package com.traffic.merchant.entity;
 import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -47,6 +48,9 @@ public class Merchant {
 
     /** 是否为业务员跟进线索：1=线索（不显示在商家管理），0=正式商家 */
     private Integer isLead;
+
+    /** 套餐到期日（普通版为 null 表示永久） */
+    private LocalDate packageExpireAt;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

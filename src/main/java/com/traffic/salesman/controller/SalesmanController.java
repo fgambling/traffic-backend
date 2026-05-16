@@ -24,6 +24,8 @@ import com.traffic.salesman.mapper.MerchantFollowMapper;
 import com.traffic.salesman.mapper.SalesmanMapper;
 import com.traffic.salesman.mapper.SalesmanMaterialMapper;
 import com.traffic.salesman.mapper.WithdrawApplyMapper;
+import com.traffic.merchant.entity.MerchantBusinessInfo;
+import com.traffic.merchant.mapper.MerchantBusinessInfoMapper;
 import com.traffic.security.JwtPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import lombok.RequiredArgsConstructor;
@@ -64,6 +66,7 @@ public class SalesmanController {
     private final SalesmanMaterialMapper materialMapper;
     private final FollowJoinRequestMapper joinRequestMapper;
     private final PasswordEncoder passwordEncoder;
+    private final MerchantBusinessInfoMapper businessInfoMapper;
 
     // ─── 鉴权工具 ────────────────────────────────────────────
     private Salesman requireSalesman(JwtPrincipal principal) {
@@ -633,6 +636,42 @@ public class SalesmanController {
         Salesman s = requireSalesman(principal);
         List<String> names = followMapper.findCoSalesmenNames(merchantId, s.getId());
         return R.ok(names);
+    }
+
+    // ─── 门店业务信息（业务员代填） ───────────────────────────────
+
+    /**
+     * GET /api/salesman/merchant/{merchantId}/business-info
+     * 获取商家的门店业务信息（菜单、促销、营业时间等）
+     */
+    @GetMapping("/merchant/{merchantId}/business-info")
+    public R<MerchantBusinessInfo> getBusinessInfo(@AuthenticationPrincipal JwtPrincipal principal,
+                                                   @PathVariable Integer merchantId) {
+        requireSalesman(principal);
+        MerchantBusinessInfo info = businessInfoMapper.findByMerchant(merchantId);
+        return R.ok(info != null ? info : new MerchantBusinessInfo());
+    }
+
+    /**
+     * PUT /api/salesman/merchant/{merchantId}/business-info
+     * 业务员为商家填写/更新门店业务信息
+     */
+    @PutMapping("/merchant/{merchantId}/business-info")
+    public R<Void> saveBusinessInfo(@AuthenticationPrincipal JwtPrincipal principal,
+                                    @PathVariable Integer merchantId,
+                                    @RequestBody MerchantBusinessInfo body) {
+        requireSalesman(principal);
+        MerchantBusinessInfo existing = businessInfoMapper.findByMerchant(merchantId);
+        if (existing == null) {
+            body.setId(null);
+            body.setMerchantId(merchantId);
+            businessInfoMapper.insert(body);
+        } else {
+            body.setId(existing.getId());
+            body.setMerchantId(merchantId);
+            businessInfoMapper.updateById(body);
+        }
+        return R.ok(null);
     }
 
     // ─── 营销素材 ─────────────────────────────────────────────

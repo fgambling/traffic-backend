@@ -40,6 +40,44 @@ public class AdminMerchantController {
     private final SalesmanMapper salesmanMapper;
     private final PasswordEncoder passwordEncoder;
 
+    /** 管理员手动添加商家 */
+    @PostMapping
+    public R<Void> create(@RequestBody Map<String, Object> body) {
+        String name        = (String) body.get("name");
+        String contactPhone = (String) body.get("contactPhone");
+        String contactPerson = (String) body.get("contactPerson");
+        if (!StringUtils.hasText(name))          throw new BusinessException(400, "商家名称不能为空");
+        if (!StringUtils.hasText(contactPhone))  throw new BusinessException(400, "联系电话不能为空");
+        if (!StringUtils.hasText(contactPerson)) throw new BusinessException(400, "联系人不能为空");
+
+        // 营业执照选填，填了则检查重复
+        String licenseNo = (String) body.get("licenseNo");
+        if (StringUtils.hasText(licenseNo)) {
+            String normalized = licenseNo.trim().toUpperCase();
+            long exists = merchantMapper.selectCount(new LambdaQueryWrapper<Merchant>()
+                    .apply("UPPER(license_no) = {0}", normalized));
+            if (exists > 0) throw new BusinessException(409, "营业执照号已存在");
+            licenseNo = normalized;
+        }
+
+        Merchant m = new Merchant();
+        m.setName(name.trim());
+        if (StringUtils.hasText(licenseNo)) m.setLicenseNo(licenseNo);
+        m.setContactPerson(contactPerson.trim());
+        m.setContactPhone(contactPhone.trim());
+        m.setAddress((String) body.get("address"));
+        m.setPackageType(body.get("packageType") != null ? ((Number) body.get("packageType")).intValue() : 1);
+        m.setStatus(1);
+        m.setIsLead(0);
+        // 密码留空默认 123456
+        String pwd = (String) body.get("password");
+        m.setPassword(passwordEncoder.encode(StringUtils.hasText(pwd) ? pwd : "123456"));
+        String expStr = (String) body.get("packageExpireAt");
+        if (StringUtils.hasText(expStr)) m.setPackageExpireAt(LocalDate.parse(expStr));
+        merchantMapper.insert(m);
+        return R.ok(null);
+    }
+
     /** 商家列表（分页+搜索） */
     @GetMapping
     public R<Map<String, Object>> list(
@@ -114,6 +152,11 @@ public class AdminMerchantController {
         if (body.containsKey("contactPhone"))  wrapper.set(Merchant::getContactPhone,  body.get("contactPhone"));
         if (body.containsKey("address"))       wrapper.set(Merchant::getAddress,       body.get("address"));
         if (body.containsKey("packageType"))   wrapper.set(Merchant::getPackageType,   ((Number) body.get("packageType")).intValue());
+        if (body.containsKey("packageExpireAt")) {
+            String expStr = (String) body.get("packageExpireAt");
+            wrapper.set(Merchant::getPackageExpireAt,
+                StringUtils.hasText(expStr) ? LocalDate.parse(expStr) : null);
+        }
         if (body.containsKey("password") && StringUtils.hasText((String) body.get("password")))
             wrapper.set(Merchant::getPassword, passwordEncoder.encode((String) body.get("password")));
         merchantMapper.update(null, wrapper);
