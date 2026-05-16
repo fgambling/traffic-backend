@@ -74,6 +74,7 @@ public class AdminWithdrawController {
             item.put("status",     w.getStatus());
             item.put("remark",     w.getRemark());
             item.put("createdAt",  w.getCreatedAt());
+            item.put("updatedAt",  w.getUpdatedAt());
             Salesman s = salesmanMapper.selectById(w.getSalesmanId());
             item.put("salesmanName", s != null ? s.getName() : "--");
             item.put("salesmanPhone", s != null ? s.getPhone() : "--");
@@ -93,14 +94,13 @@ public class AdminWithdrawController {
         if (apply == null) throw new BusinessException(404, "申请不存在");
         if (apply.getStatus() != 0) throw new BusinessException(400, "该申请已处理");
 
-        String remark = body != null ? body.getOrDefault("remark", "") : "";
         withdrawMapper.update(null, new LambdaUpdateWrapper<WithdrawApply>()
                 .eq(WithdrawApply::getId, id)
                 .set(WithdrawApply::getStatus, 1)
-                .set(WithdrawApply::getRemark, remark));
+                .set(WithdrawApply::getUpdatedAt, java.time.LocalDateTime.now()));
 
-        AdminSystemController.writeLog("admin", "withdraw",
-                String.format("通过提现申请 id=%d 金额¥%s", id, apply.getAmount()), "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "提现审核",
+                String.format("通过提现申请 id=%d 金额¥%s", id, apply.getAmount()));
         return R.ok(null);
     }
 
@@ -115,11 +115,10 @@ public class AdminWithdrawController {
         if (apply == null) throw new BusinessException(404, "申请不存在");
         if (apply.getStatus() != 0) throw new BusinessException(400, "该申请已处理");
 
-        String remark = body != null ? body.getOrDefault("remark", "") : "";
         withdrawMapper.update(null, new LambdaUpdateWrapper<WithdrawApply>()
                 .eq(WithdrawApply::getId, id)
                 .set(WithdrawApply::getStatus, 2)
-                .set(WithdrawApply::getRemark, remark));
+                .set(WithdrawApply::getUpdatedAt, java.time.LocalDateTime.now()));
 
         // 退还余额
         BigDecimal refund = apply.getAmount();
@@ -127,8 +126,8 @@ public class AdminWithdrawController {
                 .eq(Salesman::getId, apply.getSalesmanId())
                 .setSql("balance = balance + " + refund));
 
-        AdminSystemController.writeLog("admin", "withdraw",
-                String.format("驳回提现申请 id=%d 金额¥%s", id, apply.getAmount()), "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "提现审核",
+                String.format("驳回提现申请 id=%d 金额¥%s", id, apply.getAmount()));
         return R.ok(null);
     }
 }

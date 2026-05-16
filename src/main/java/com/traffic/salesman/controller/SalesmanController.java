@@ -1022,9 +1022,6 @@ public class SalesmanController {
         if (req.getAmount().compareTo(MIN_WITHDRAW) < 0) {
             throw new BusinessException(400, "提现金额不能低于 " + MIN_WITHDRAW.toPlainString() + " 元");
         }
-        if (!StringUtils.hasText(req.getAccount())) {
-            throw new BusinessException(400, "请填写收款账号");
-        }
         if (s.getBalance().compareTo(req.getAmount()) < 0) {
             throw new BusinessException(400, "余额不足，当前可提现 " + s.getBalance().toPlainString() + " 元");
         }
@@ -1032,8 +1029,6 @@ public class SalesmanController {
         WithdrawApply apply = new WithdrawApply();
         apply.setSalesmanId(s.getId());
         apply.setAmount(req.getAmount());
-        apply.setWay(req.getWay() != null ? req.getWay() : 1);
-        apply.setAccount(req.getAccount());
         apply.setStatus(0);  // 待审核（冻结）
         withdrawMapper.insert(apply);
 

@@ -154,7 +154,7 @@ public class AdminAiController {
                 systemConfigMapper.setValue(entry.getKey(), entry.getValue());
             }
         }
-        AdminSystemController.writeLog("admin", "ai", "更新AI模型配置", "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "ai", "更新AI模型配置");
         return R.ok(null);
     }
 
@@ -228,7 +228,7 @@ public class AdminAiController {
         aiAdviceMapper.update(null, wrapper);
 
         String action = status != null && status == 1 ? "采纳" : "标记待优化";
-        AdminSystemController.writeLog("admin", "ai", "建议审核[" + action + "] id=" + id, "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "ai", "建议审核[" + action + "] id=" + id);
         return R.ok(null);
     }
 

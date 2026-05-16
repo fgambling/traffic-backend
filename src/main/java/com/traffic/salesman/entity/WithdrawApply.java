@@ -36,4 +36,7 @@ public class WithdrawApply {
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
+
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL, updateStrategy = FieldStrategy.NOT_NULL)
+    private LocalDateTime updatedAt;
 }

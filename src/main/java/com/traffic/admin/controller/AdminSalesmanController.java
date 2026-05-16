@@ -98,7 +98,7 @@ public class AdminSalesmanController {
         s.setBalance(BigDecimal.ZERO);
         salesmanMapper.insert(s);
 
-        AdminSystemController.writeLog("admin", "salesman", "新增业务员「" + s.getName() + "」", "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "业务员管理", "新增业务员「" + s.getName() + "」");
         return R.ok(null);
     }
 
@@ -144,8 +144,8 @@ public class AdminSalesmanController {
             salesmanMapper.insert(s);
             success++;
         }
-        AdminSystemController.writeLog("admin", "salesman",
-                String.format("批量导入业务员 成功%d 跳过%d", success, skip), "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "业务员管理",
+                String.format("批量导入业务员 成功%d 跳过%d", success, skip));
         return R.ok(Map.of("success", success, "skip", skip));
     }
 
@@ -173,7 +173,7 @@ public class AdminSalesmanController {
                     .set(CommissionRule::getFixedAmount, rule.getFixedAmount())
                     .set(CommissionRule::getDescription, rule.getDescription()));
         }
-        AdminSystemController.writeLog("admin", "salesman", "保存佣金规则 pkg=" + rule.getPackageType(), "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "业务员管理", "保存佣金规则 pkg=" + rule.getPackageType());
         return R.ok(null);
     }
 

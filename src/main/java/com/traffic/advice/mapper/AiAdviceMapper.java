@@ -67,9 +67,9 @@ public interface AiAdviceMapper extends BaseMapper<AiAdvice> {
             "  MAX(a.created_at) AS lastGenAt, " +
             "  COALESCE(SUM(LENGTH(a.content)), 0) AS totalContentLen, " +
             "  COALESCE(SUM(CASE WHEN DATE(a.created_at) = CURDATE() THEN LENGTH(a.content) ELSE 0 END), 0) AS todayContentLen " +
-            "FROM merchant m " +
-            "LEFT JOIN ai_advice a ON a.merchant_id = m.id AND a.source = 2 " +
-            "WHERE m.package_type = 3 AND m.status = 1 " +
+            "FROM ai_advice a " +
+            "JOIN merchant m ON m.id = a.merchant_id " +
+            "WHERE a.source = 2 " +
             "GROUP BY m.id, m.name, a.model_used " +
             "ORDER BY m.id ASC")
     List<Map<String, Object>> costByMerchantModel();

@@ -132,6 +132,7 @@ public class AdminMerchantController {
         result.put("packageType",     m.getPackageType());
         result.put("packageExpireAt", m.getPackageExpireAt() != null ? m.getPackageExpireAt().toString() : null);
         result.put("status",          m.getStatus());
+        result.put("bindId",          m.getBindId());
         result.put("createdAt",       m.getCreatedAt());
         result.put("todaySnapshot",   snapshot);
         return R.ok(result);
@@ -161,6 +162,18 @@ public class AdminMerchantController {
             String expStr = (String) body.get("packageExpireAt");
             wrapper.set(Merchant::getPackageExpireAt,
                 StringUtils.hasText(expStr) ? LocalDate.parse(expStr) : null);
+        }
+        if (body.containsKey("bindId")) {
+            String newBind = (String) body.get("bindId");
+            if (StringUtils.hasText(newBind)) {
+                long dup = merchantMapper.selectCount(new LambdaQueryWrapper<Merchant>()
+                        .eq(Merchant::getBindId, newBind.trim())
+                        .ne(Merchant::getId, id));
+                if (dup > 0) throw new BusinessException(409, "该 bindId 已被其他商家使用");
+                wrapper.set(Merchant::getBindId, newBind.trim());
+            } else {
+                wrapper.set(Merchant::getBindId, (String) null);
+            }
         }
         if (body.containsKey("password") && StringUtils.hasText((String) body.get("password")))
             wrapper.set(Merchant::getPassword, passwordEncoder.encode((String) body.get("password")));
@@ -194,7 +207,7 @@ public class AdminMerchantController {
             mw.set(Merchant::getPassword, passwordEncoder.encode("123456"));
         }
         merchantMapper.update(null, mw);
-        AdminSystemController.writeLog("admin", "merchant", "审批通过商家「" + m.getName() + "」", "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "商家管理", "审批通过商家「" + m.getName() + "」");
         return R.ok(null);
     }
 
@@ -255,9 +268,8 @@ public class AdminMerchantController {
 
         Merchant m = merchantMapper.selectById(merchantId);
         String merchantName = m != null ? m.getName() : String.valueOf(merchantId);
-        AdminSystemController.writeLog("admin", "merchant",
-                String.format("为商家「%s」设置佣金 ¥%s → 业务员 id=%d", merchantName, amount.toPlainString(), follow.getSalesmanId()),
-                "admin");
+        AdminSystemController.writeLog(AdminSystemController.currentAdminName(), "商家管理",
+                String.format("为商家「%s」设置佣金 ¥%s → 业务员 id=%d", merchantName, amount.toPlainString(), follow.getSalesmanId()));
         return R.ok(null);
     }
 

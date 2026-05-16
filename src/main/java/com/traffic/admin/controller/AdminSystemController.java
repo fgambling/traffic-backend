@@ -3,18 +3,24 @@ package com.traffic.admin.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.traffic.admin.entity.AdminUser;
 import com.traffic.admin.entity.BugLog;
+import com.traffic.admin.entity.OpLog;
+import com.traffic.admin.mapper.AdminUserMapper;
 import com.traffic.admin.mapper.BugLogMapper;
+import com.traffic.admin.mapper.OpLogMapper;
+import com.traffic.common.BusinessException;
 import com.traffic.common.R;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 后台系统设置接口（管理员账号、操作日志）
@@ -26,61 +32,80 @@ import java.util.concurrent.atomic.AtomicLong;
 public class AdminSystemController {
 
     private final BugLogMapper bugLogMapper;
+    private final AdminUserMapper adminUserMapper;
+    private final OpLogMapper opLogMapper;
+    private final PasswordEncoder passwordEncoder;
 
-    // ── 管理员列表（内存） ──────────────────────────────────────
-    private static final List<Map<String, Object>> ADMINS = new CopyOnWriteArrayList<>(List.of(
-        admin(1L, "admin", "管理员", "2026-01-01 00:00:00")
-    ));
-    private static final AtomicLong ADMIN_ID = new AtomicLong(2);
+    private static volatile OpLogMapper staticOpLogMapper;
 
-    private static Map<String, Object> admin(Long id, String username, String name, String createdAt) {
-        return new java.util.LinkedHashMap<>(Map.of(
-            "id", id, "username", username, "name", name, "createdAt", createdAt
-        ));
+    @org.springframework.beans.factory.annotation.Autowired
+    void initStatic(OpLogMapper opLogMapper) {
+        AdminSystemController.staticOpLogMapper = opLogMapper;
     }
+
+    // ── 管理员账号（数据库） ────────────────────────────────────
 
     @GetMapping("/admins")
     public R<List<Map<String, Object>>> getAdmins() {
-        return R.ok(ADMINS);
+        List<AdminUser> users = adminUserMapper.selectList(null);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (AdminUser u : users) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id",        u.getId());
+            item.put("username",  u.getUsername());
+            item.put("name",      u.getName());
+            item.put("createdAt", u.getCreatedAt());
+            result.add(item);
+        }
+        return R.ok(result);
     }
 
     @PostMapping("/admins")
     public R<Void> addAdmin(@RequestBody Map<String, Object> body) {
-        body.put("id", ADMIN_ID.getAndIncrement());
-        body.put("createdAt", LocalDateTime.now().toString().replace("T", " ").substring(0, 19));
-        body.remove("password");
-        ADMINS.add(body);
+        String username = (String) body.get("username");
+        String password = (String) body.get("password");
+        if (!StringUtils.hasText(username)) throw new BusinessException(400, "账号不能为空");
+        if (!StringUtils.hasText(password)) throw new BusinessException(400, "密码不能为空");
+        long exists = adminUserMapper.selectCount(
+            new LambdaQueryWrapper<AdminUser>().eq(AdminUser::getUsername, username));
+        if (exists > 0) throw new BusinessException(409, "账号已存在");
+        AdminUser u = new AdminUser()
+            .setUsername(username.trim())
+            .setName((String) body.getOrDefault("name", username))
+            .setPassword(passwordEncoder.encode(password))
+            .setCreatedAt(LocalDateTime.now());
+        adminUserMapper.insert(u);
         return R.ok(null);
     }
 
     @PutMapping("/admins/{id}")
     public R<Void> updateAdmin(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        ADMINS.stream()
-              .filter(a -> id.equals(((Number) a.get("id")).longValue()))
-              .findFirst()
-              .ifPresent(a -> {
-                  if (body.containsKey("name")) a.put("name", body.get("name"));
-              });
+        AdminUser u = adminUserMapper.selectById(id);
+        if (u == null) throw new BusinessException(404, "管理员不存在");
+        LambdaUpdateWrapper<AdminUser> wrapper = new LambdaUpdateWrapper<AdminUser>().eq(AdminUser::getId, id);
+        if (StringUtils.hasText((String) body.get("username"))) {
+            String newUsername = ((String) body.get("username")).trim();
+            long dup = adminUserMapper.selectCount(
+                new LambdaQueryWrapper<AdminUser>().eq(AdminUser::getUsername, newUsername).ne(AdminUser::getId, id));
+            if (dup > 0) throw new BusinessException(409, "账号已被使用");
+            wrapper.set(AdminUser::getUsername, newUsername);
+        }
+        if (body.containsKey("name")) wrapper.set(AdminUser::getName, body.get("name"));
+        if (StringUtils.hasText((String) body.get("password")))
+            wrapper.set(AdminUser::getPassword, passwordEncoder.encode((String) body.get("password")));
+        adminUserMapper.update(null, wrapper);
         return R.ok(null);
     }
 
     @DeleteMapping("/admins/{id}")
     public R<Void> deleteAdmin(@PathVariable Long id) {
-        ADMINS.removeIf(a -> id.equals(((Number) a.get("id")).longValue()));
+        if (adminUserMapper.selectCount(null) <= 1)
+            throw new BusinessException(400, "至少保留一个管理员账号");
+        adminUserMapper.deleteById(id);
         return R.ok(null);
     }
 
-    // ── 操作日志（内存模拟） ────────────────────────────────────
-    private static final List<Map<String, Object>> LOGS = new CopyOnWriteArrayList<>(List.of(
-        log(1, "admin", "merchant", "启用商家「测试门店」", "127.0.0.1", "2026-04-18 10:00:00"),
-        log(2, "admin", "ai",       "新增规则 R006",       "127.0.0.1", "2026-04-18 10:05:00"),
-        log(3, "admin", "system",   "新增管理员 operator1", "127.0.0.1", "2026-04-18 10:10:00")
-    ));
-    private static final AtomicLong LOG_ID = new AtomicLong(4);
-
-    private static Map<String, Object> log(long id, String op, String module, String action, String ip, String time) {
-        return Map.of("id", id, "operator", op, "module", module, "action", action, "ip", ip, "createdAt", time);
-    }
+    // ── 操作日志（数据库） ──────────────────────────────────────
 
     @GetMapping("/logs")
     public R<Map<String, Object>> getLogs(
@@ -89,20 +114,41 @@ public class AdminSystemController {
             @RequestParam(defaultValue = "1")  int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        var filtered = LOGS.stream()
-            .filter(l -> operator == null || operator.isBlank() || operator.equals(l.get("operator")))
-            .filter(l -> module   == null || module.isBlank()   || module.equals(l.get("module")))
-            .toList();
-
-        int from  = Math.min((page - 1) * size, filtered.size());
-        int to    = Math.min(from + size, filtered.size());
-        return R.ok(Map.of("list", filtered.subList(from, to), "total", (long) filtered.size()));
+        Page<OpLog> pageObj = new Page<>(page, size);
+        LambdaQueryWrapper<OpLog> wrapper = new LambdaQueryWrapper<OpLog>()
+                .like(StringUtils.hasText(operator), OpLog::getOperator, operator)
+                .eq(StringUtils.hasText(module),     OpLog::getModule,   module)
+                .orderByDesc(OpLog::getCreatedAt);
+        opLogMapper.selectPage(pageObj, wrapper);
+        return R.ok(Map.of("list", pageObj.getRecords(), "total", pageObj.getTotal()));
     }
 
-    /** 供其他 Controller 调用写日志 */
-    public static void writeLog(String operator, String module, String action, String ip) {
-        LOGS.add(0, log(LOG_ID.getAndIncrement(), operator, module, action, ip,
-                LocalDateTime.now().toString().replace("T", " ").substring(0, 19)));
+    private static volatile AdminUserMapper staticAdminUserMapper;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void initAdminMapper(AdminUserMapper m) { AdminSystemController.staticAdminUserMapper = m; }
+
+    /** 从 SecurityContext 取当前登录管理员姓名 */
+    public static String currentAdminName() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof com.traffic.security.JwtPrincipal p))
+            return "管理员";
+        if (staticAdminUserMapper == null) return "管理员";
+        AdminUser u = staticAdminUserMapper.selectById(p.getMerchantId());
+        return u != null && org.springframework.util.StringUtils.hasText(u.getName()) ? u.getName() : "管理员";
+    }
+
+    /** 供其他 Controller 调用写日志，operator 为管理员姓名 */
+    public static void writeLog(String operator, String module, String action) {
+        if (staticOpLogMapper == null) return;
+        try {
+            staticOpLogMapper.insert(new OpLog()
+                    .setOperator(operator)
+                    .setModule(module)
+                    .setAction(action)
+                    .setCreatedAt(LocalDateTime.now()));
+        } catch (Exception ignored) {}
     }
 
     // ── BUG 日志 ────────────────────────────────────────────────
