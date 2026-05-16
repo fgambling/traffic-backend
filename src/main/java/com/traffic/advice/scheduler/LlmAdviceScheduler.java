@@ -73,6 +73,13 @@ public class LlmAdviceScheduler {
     private void processOneMerchant(Merchant merchant, int dailyLimit, String modelUsed) {
         Integer merchantId = merchant.getId();
 
+        // 套餐到期检查
+        if (merchant.getPackageExpireAt() != null &&
+                merchant.getPackageExpireAt().isBefore(LocalDate.now(ZoneId.of("Asia/Shanghai")))) {
+            log.info("商家{}套餐已到期，跳过凌晨 LLM 生成", merchantId);
+            return;
+        }
+
         // 检查今日 LLM 调用次数是否达上限（按 call_id 去重）
         if (dailyLimit > 0) {
             LocalDateTime todayStart = LocalDate.now(ZoneId.of("Asia/Shanghai")).atStartOfDay();

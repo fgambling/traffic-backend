@@ -87,9 +87,16 @@ public class AdviceServiceImpl implements AdviceService {
     String snapshot = buildSnapshot(summary, peakHour, peakCount);
 
     Merchant merchant = merchantMapper.selectById(merchantId);
-    if (merchant != null && merchant.getPackageType() != null && merchant.getPackageType() >= 3) {
-      generateByLlm(merchantId, merchant.getName(), totalEnter, avgStay, femaleRatio, peakHour, peakCount, snapshot);
-      return;
+    if (merchant != null) {
+      // 套餐到期检查
+      if (merchant.getPackageExpireAt() != null &&
+          merchant.getPackageExpireAt().isBefore(java.time.LocalDate.now(ZoneId.of("Asia/Shanghai")))) {
+        throw new com.traffic.common.BusinessException(403, "套餐已到期，请联系管理员续费");
+      }
+      if (merchant.getPackageType() != null && merchant.getPackageType() >= 3) {
+        generateByLlm(merchantId, merchant.getName(), totalEnter, avgStay, femaleRatio, peakHour, peakCount, snapshot);
+        return;
+      }
     }
 
     generateByRule(merchantId, totalEnter, avgStay, peakHour, peakCount, start, snapshot);

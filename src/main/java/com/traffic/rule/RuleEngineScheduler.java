@@ -12,7 +12,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -68,6 +70,13 @@ public class RuleEngineScheduler {
     /** 处理单个商家 */
     private void processOneMerchant(Merchant merchant) {
         Integer merchantId = merchant.getId();
+
+        // 套餐到期检查
+        if (merchant.getPackageExpireAt() != null &&
+                merchant.getPackageExpireAt().isBefore(LocalDate.now(ZoneId.of("Asia/Shanghai")))) {
+            log.info("商家{}套餐已到期，跳过规则引擎", merchantId);
+            return;
+        }
 
         // 1. 执行规则评估（内置 + 自定义，含去重）
         List<RuleResult> results = ruleEngine.evaluate(merchantId);
