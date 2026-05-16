@@ -9,7 +9,9 @@ import com.traffic.device.entity.TrafficFact;
 import com.traffic.device.mapper.TrafficFactMapper;
 import com.traffic.device.service.impl.DeviceServiceImpl;
 import com.traffic.merchant.entity.Merchant;
+import com.traffic.merchant.entity.PackageApplication;
 import com.traffic.merchant.mapper.MerchantMapper;
+import com.traffic.merchant.mapper.PackageApplicationMapper;
 import com.traffic.salesman.entity.MerchantFollow;
 import com.traffic.salesman.entity.Salesman;
 import com.traffic.salesman.mapper.MerchantFollowMapper;
@@ -39,6 +41,7 @@ public class AdminMerchantController {
     private final MerchantFollowMapper followMapper;
     private final SalesmanMapper salesmanMapper;
     private final PasswordEncoder passwordEncoder;
+    private final PackageApplicationMapper applicationMapper;
 
     /** 管理员手动添加商家 */
     @PostMapping
@@ -255,6 +258,52 @@ public class AdminMerchantController {
         AdminSystemController.writeLog("admin", "merchant",
                 String.format("为商家「%s」设置佣金 ¥%s → 业务员 id=%d", merchantName, amount.toPlainString(), follow.getSalesmanId()),
                 "admin");
+        return R.ok(null);
+    }
+
+    // ── 套餐申请管理 ─────────────────────────────────────────────────
+
+    /** 套餐申请列表（分页） */
+    @GetMapping("/package-applications")
+    public R<Map<String, Object>> listApplications(
+            @RequestParam(required = false) Integer status,
+            @RequestParam(defaultValue = "1")  int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<Map<String, Object>> pageObj = new Page<>(page, size);
+        var result = applicationMapper.pageApplications(pageObj, status);
+        return R.ok(Map.of("list", result.getRecords(), "total", result.getTotal()));
+    }
+
+    /** 待处理套餐申请数量（用于 tab badge） */
+    @GetMapping("/package-applications/pending-count")
+    public R<Long> pendingApplicationCount() {
+        return R.ok(applicationMapper.countPending());
+    }
+
+    /** 审批套餐申请：通过（1）/ 拒绝（2） */
+    @PutMapping("/package-applications/{id}/review")
+    public R<Void> reviewApplication(@PathVariable Long id,
+                                     @RequestBody Map<String, Object> body) {
+        PackageApplication app = applicationMapper.selectById(id);
+        if (app == null) throw new BusinessException(404, "申请不存在");
+        if (app.getStatus() != 0) throw new BusinessException(400, "该申请已处理");
+
+        int status = ((Number) body.get("status")).intValue();  // 1=通过 2=拒绝
+        String adminNote = (String) body.get("adminNote");
+
+        app.setStatus(status).setAdminNote(adminNote);
+        applicationMapper.updateById(app);
+
+        // 通过时自动升级套餐
+        if (status == 1) {
+            String expStr = (String) body.get("packageExpireAt");
+            LambdaUpdateWrapper<Merchant> mw = new LambdaUpdateWrapper<Merchant>()
+                    .eq(Merchant::getId, app.getMerchantId())
+                    .set(Merchant::getPackageType, app.getTargetPkg());
+            if (StringUtils.hasText(expStr))
+                mw.set(Merchant::getPackageExpireAt, java.time.LocalDate.parse(expStr));
+            merchantMapper.update(null, mw);
+        }
         return R.ok(null);
     }
 

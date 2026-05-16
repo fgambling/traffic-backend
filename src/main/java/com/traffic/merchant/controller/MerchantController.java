@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.traffic.common.BusinessException;
 import com.traffic.common.ErrorCode;
 import com.traffic.common.R;
+import com.traffic.merchant.entity.PackageApplication;
+import com.traffic.merchant.mapper.PackageApplicationMapper;
 import com.traffic.device.entity.TrafficFact;
 import com.traffic.device.mapper.TrafficFactMapper;
 import com.traffic.merchant.dto.DashboardResponse;
@@ -37,10 +39,14 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -56,11 +62,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MerchantController {
 
-  private final MerchantService           merchantService;
-  private final MerchantMapper            merchantMapper;
+  private final MerchantService            merchantService;
+  private final MerchantMapper             merchantMapper;
   private final MerchantBusinessInfoMapper businessInfoMapper;
-  private final TrafficFactMapper         trafficFactMapper;
-  private final PasswordEncoder           passwordEncoder;
+  private final TrafficFactMapper          trafficFactMapper;
+  private final PasswordEncoder            passwordEncoder;
+  private final PackageApplicationMapper   applicationMapper;
 
   /**
    * 获取今日客流看板
@@ -663,6 +670,72 @@ public class MerchantController {
     item.put("address",    m.getAddress());
     item.put("licenseNo",  m.getLicenseNo());
     return item;
+  }
+
+  // ── 套餐升级申请 ─────────────────────────────────────────────
+
+  /** 提交套餐升级申请 */
+  @PostMapping("/package-application")
+  public R<Void> submitApplication(@AuthenticationPrincipal JwtPrincipal principal,
+                                   @RequestBody Map<String, Object> body) {
+    if (!"merchant".equals(principal.getRole())) throw new BusinessException(ErrorCode.FORBIDDEN);
+    Integer merchantId = principal.getMerchantId();
+    Integer targetPkg  = body.get("targetPkg") != null ? ((Number) body.get("targetPkg")).intValue() : null;
+    if (targetPkg == null || targetPkg < 2 || targetPkg > 3)
+      throw new BusinessException(400, "请选择升级套餐版本");
+
+    Merchant m = merchantMapper.selectById(merchantId);
+    if (m != null && m.getPackageType() >= targetPkg)
+      throw new BusinessException(400, "您已是该版本或更高版本，无需申请");
+
+    // 已有待处理申请则拒绝重复提交
+    long pending = applicationMapper.selectCount(
+        new LambdaQueryWrapper<PackageApplication>()
+            .eq(PackageApplication::getMerchantId, merchantId)
+            .eq(PackageApplication::getStatus, 0));
+    if (pending > 0) throw new BusinessException(400, "您已有待处理的申请，请耐心等待");
+
+    PackageApplication app = new PackageApplication()
+        .setMerchantId(merchantId)
+        .setTargetPkg(targetPkg)
+        .setRemark((String) body.get("remark"))
+        .setImageUrl((String) body.get("imageUrl"))
+        .setStatus(0);
+    applicationMapper.insert(app);
+    return R.ok(null);
+  }
+
+  /** 查询本商家最新申请状态 */
+  @GetMapping("/package-application/latest")
+  public R<Map<String, Object>> latestApplication(@AuthenticationPrincipal JwtPrincipal principal) {
+    if (!"merchant".equals(principal.getRole())) throw new BusinessException(ErrorCode.FORBIDDEN);
+    PackageApplication app = applicationMapper.selectOne(
+        new LambdaQueryWrapper<PackageApplication>()
+            .eq(PackageApplication::getMerchantId, principal.getMerchantId())
+            .orderByDesc(PackageApplication::getCreatedAt)
+            .last("LIMIT 1"));
+    if (app == null) return R.ok(null);
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("id",        app.getId());
+    result.put("targetPkg", app.getTargetPkg());
+    result.put("status",    app.getStatus());
+    result.put("adminNote", app.getAdminNote());
+    result.put("createdAt", app.getCreatedAt());
+    return R.ok(result);
+  }
+
+  /** 上传图片（供套餐申请使用） */
+  @PostMapping("/upload")
+  public R<Map<String, String>> upload(@AuthenticationPrincipal JwtPrincipal principal,
+                                       @RequestParam("file") MultipartFile file) throws IOException {
+    if (!"merchant".equals(principal.getRole())) throw new BusinessException(ErrorCode.FORBIDDEN);
+    String ext = StringUtils.getFilenameExtension(file.getOriginalFilename());
+    String filename = "merchant_" + principal.getMerchantId() + "_" + System.currentTimeMillis()
+        + (StringUtils.hasText(ext) ? "." + ext : "");
+    String uploadDir = Paths.get(System.getProperty("user.dir"), "uploads").toString();
+    new File(uploadDir).mkdirs();
+    Files.write(Paths.get(uploadDir, filename), file.getBytes());
+    return R.ok(Map.of("url", "/uploads/" + filename));
   }
 
   @GetMapping("/profile")
