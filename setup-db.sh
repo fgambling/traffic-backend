@@ -51,7 +51,7 @@ run_sql sql/upgrade_join_request.sql      "$DB_NAME"
 run_sql sql/upgrade_merchant_auth.sql     "$DB_NAME"
 # AI 模块补丁（字段已存在时 MySQL 会报错，用 || true 忽略）
 mysql -u "$MYSQL_USER" "$DB_NAME" < sql/upgrade_ai_module.sql 2>/dev/null || true
-run_sql sql/upgrade_package_expire.sql    "$DB_NAME"
+mysql -u "$MYSQL_USER" "$DB_NAME" < sql/upgrade_package_expire.sql 2>/dev/null || true
 run_sql sql/upgrade_person_visit.sql      "$DB_NAME"
 
 echo ""

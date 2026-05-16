@@ -126,10 +126,11 @@ public class AdminMerchantController {
         result.put("contactPerson", m.getContactPerson());
         result.put("contactPhone",  m.getContactPhone());
         result.put("address",       m.getAddress());
-        result.put("packageType",   m.getPackageType());
-        result.put("status",        m.getStatus());
-        result.put("createdAt",     m.getCreatedAt());
-        result.put("todaySnapshot", snapshot);
+        result.put("packageType",     m.getPackageType());
+        result.put("packageExpireAt", m.getPackageExpireAt() != null ? m.getPackageExpireAt().toString() : null);
+        result.put("status",          m.getStatus());
+        result.put("createdAt",       m.getCreatedAt());
+        result.put("todaySnapshot",   snapshot);
         return R.ok(result);
     }
 
@@ -147,7 +148,8 @@ public class AdminMerchantController {
 
         LambdaUpdateWrapper<Merchant> wrapper = new LambdaUpdateWrapper<Merchant>().eq(Merchant::getId, id);
         if (body.containsKey("name"))          wrapper.set(Merchant::getName,          body.get("name"));
-        if (body.containsKey("licenseNo"))     wrapper.set(Merchant::getLicenseNo,     ((String) body.get("licenseNo")).trim().toUpperCase());
+        if (body.containsKey("licenseNo") && StringUtils.hasText((String) body.get("licenseNo")))
+            wrapper.set(Merchant::getLicenseNo, ((String) body.get("licenseNo")).trim().toUpperCase());
         if (body.containsKey("contactPerson")) wrapper.set(Merchant::getContactPerson, body.get("contactPerson"));
         if (body.containsKey("contactPhone"))  wrapper.set(Merchant::getContactPhone,  body.get("contactPhone"));
         if (body.containsKey("address"))       wrapper.set(Merchant::getAddress,       body.get("address"));

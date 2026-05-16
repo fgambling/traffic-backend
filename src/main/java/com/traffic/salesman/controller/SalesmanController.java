@@ -660,7 +660,12 @@ public class SalesmanController {
     public R<Void> saveBusinessInfo(@AuthenticationPrincipal JwtPrincipal principal,
                                     @PathVariable Integer merchantId,
                                     @RequestBody MerchantBusinessInfo body) {
-        requireSalesman(principal);
+        Salesman s = requireSalesman(principal);
+        MerchantFollow follow = followMapper.selectOne(new LambdaQueryWrapper<MerchantFollow>()
+                .eq(MerchantFollow::getSalesmanId, s.getId())
+                .eq(MerchantFollow::getMerchantId, merchantId)
+                .last("LIMIT 1"));
+        if (follow == null) throw new BusinessException(403, "无权限编辑该商家信息");
         MerchantBusinessInfo existing = businessInfoMapper.findByMerchant(merchantId);
         if (existing == null) {
             body.setId(null);
